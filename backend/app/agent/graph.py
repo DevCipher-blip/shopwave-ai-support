@@ -403,8 +403,9 @@ async def run_agent(
                 tool_name = tool_call["name"]
                 tool_args = tool_call["args"]
 
-                # Inject session_id into process_refund_decision
-                if tool_name == "process_refund_decision" and "session_id" not in tool_args:
+                # The session is never taken from model output.
+                tool_args = {k: v for k, v in tool_args.items() if k != "session_id"}
+                if tool_name == "process_refund_decision":
                     tool_args["session_id"] = session_id
 
                 # Emit tool call log

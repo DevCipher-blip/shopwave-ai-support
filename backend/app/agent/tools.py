@@ -1,65 +1,62 @@
 """
-Agent tools — each tool is a pure async function that reads from the DB.
-Tools are registered with @tool decorator for LangChain/LangGraph.
+Agent tools registered with LangChain's @tool decorator.
+
+Each tool returns a JSON string so the model sees exactly what the admin
+dashboard logs.
 """
 import json
-from datetime import date, timedelta
-from pathlib import Path
-from typing import Optional
+from datetime import date, datetime, timedelta, timezone
+from typing import Annotated
 
-from langchain_core.tools import tool
-from sqlalchemy import select, func
+from langchain_core.tools import InjectedToolArg, tool
+from sqlalchemy import select
 
-from app.config import settings
+from app.agent.policy import FRAUD_LOOKBACK_DAYS, evaluate_refund, normalize_reason, parse_date
 from app.database.db import AsyncSessionLocal
-from app.database.models import Customer, Order, RefundHistory
+from app.database.models import ChatSession, Customer, Order, RefundHistory
 
 
-def _days_between(date_str: str) -> int:
-    """Return days between a date string (YYYY-MM-DD) and today."""
-    try:
-        d = date.fromisoformat(date_str)
-        return (date.today() - d).days
-    except Exception:
-        return -1
+def today() -> date:
+    return date.today()
+
+
+async def _load_refunds(session, customer_id: str) -> list[RefundHistory]:
+    result = await session.execute(
+        select(RefundHistory).where(RefundHistory.customer_id == customer_id)
+    )
+    return list(result.scalars().all())
 
 
 @tool
-async def search_customer(query: str) -> str:
+async def search_customer(email: str) -> str:
     """
-    Search for a customer by name or email address.
-    Returns a list of matching customers with their basic profile.
-    Use this when the customer hasn't provided their customer ID.
+    Look up a customer by the exact email address on their account.
+    Only use an email the customer has typed in this conversation.
 
     Args:
-        query: Customer's name or email address
+        email: The customer's email address
     """
-    query_lower = query.lower().strip()
+    normalized = email.strip().lower()
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Customer))
-        customers = result.scalars().all()
+        result = await session.execute(select(Customer).where(Customer.email == normalized))
+        customer = result.scalar_one_or_none()
 
-    matches = []
-    for c in customers:
-        if query_lower in c.email.lower() or query_lower in c.name.lower():
-            matches.append({
-                "customer_id": c.customer_id,
-                "name": c.name,
-                "email": c.email,
-                "loyalty_tier": c.loyalty_tier,
-            })
+    if not customer:
+        return json.dumps({"found": False, "message": "No customer found for that email address."})
 
-    if not matches:
-        return json.dumps({"found": False, "message": f"No customer found matching '{query}'"})
-
-    return json.dumps({"found": True, "matches": matches})
+    return json.dumps({
+        "found": True,
+        "customer_id": customer.customer_id,
+        "name": customer.name,
+        "loyalty_tier": customer.loyalty_tier,
+    })
 
 
 @tool
 async def get_customer_profile(customer_id: str) -> str:
     """
-    Retrieve the full CRM profile for a customer including their order history
-    and previous refund history. Always call this before making any refund decision.
+    Retrieve the CRM profile for a customer including loyalty tier, fraud flag
+    and previous refund history. Call this before making any refund decision.
 
     Args:
         customer_id: The customer's unique ID (e.g. CUST-001)
@@ -68,42 +65,25 @@ async def get_customer_profile(customer_id: str) -> str:
         customer = await session.get(Customer, customer_id)
         if not customer:
             return json.dumps({"found": False, "error": f"Customer {customer_id} not found"})
+        refunds = await _load_refunds(session, customer_id)
 
-        refund_result = await session.execute(
-            select(RefundHistory).where(RefundHistory.customer_id == customer_id)
-        )
-        refund_history = refund_result.scalars().all()
-
-        # Count refunds in last 90 days
-        ninety_days_ago = (date.today() - timedelta(days=90)).isoformat()
-        recent_refunds = [
-            r for r in refund_history
-            if r.date >= ninety_days_ago and r.status == "approved"
-        ]
+    cutoff = (today() - timedelta(days=FRAUD_LOOKBACK_DAYS)).isoformat()
+    recent = [r for r in refunds if r.date >= cutoff and r.status == "approved"]
 
     return json.dumps({
         "found": True,
         "customer_id": customer.customer_id,
         "name": customer.name,
-        "email": customer.email,
-        "phone": customer.phone,
         "loyalty_tier": customer.loyalty_tier,
         "account_created": customer.account_created,
         "total_orders": customer.total_orders,
         "total_spent": customer.total_spent,
         "fraud_flag": customer.fraud_flag,
-        "address": customer.address,
         "refund_history": [
-            {
-                "order_id": r.order_id,
-                "date": r.date,
-                "reason": r.reason,
-                "amount": r.amount,
-                "status": r.status
-            }
-            for r in refund_history
+            {"order_id": r.order_id, "date": r.date, "reason": r.reason, "amount": r.amount, "status": r.status}
+            for r in refunds
         ],
-        "recent_refund_count_90d": len(recent_refunds),
+        "recent_refund_count_90d": len(recent),
     })
 
 
@@ -116,12 +96,14 @@ async def get_order_details(order_id: str) -> str:
     Args:
         order_id: The order ID (e.g. ORD-10021)
     """
+    order_id = order_id.strip().upper()
     async with AsyncSessionLocal() as session:
         order = await session.get(Order, order_id)
         if not order:
             return json.dumps({"found": False, "error": f"Order {order_id} not found"})
 
-    days_since_delivery = _days_between(order.delivered_date) if order.delivered_date else -1
+    delivered = parse_date(order.delivered_date)
+    days_since_delivery = (today() - delivered).days if delivered else -1
 
     return json.dumps({
         "found": True,
@@ -138,12 +120,16 @@ async def get_order_details(order_id: str) -> str:
     })
 
 
+async def _evaluate(order_id: str, customer_id: str, reason_code: str):
+    async with AsyncSessionLocal() as session:
+        order = await session.get(Order, order_id.strip().upper())
+        customer = await session.get(Customer, customer_id.strip().upper())
+        refunds = await _load_refunds(session, customer.customer_id) if customer else []
+    return order, customer, evaluate_refund(order, customer, refunds, reason_code, today())
+
+
 @tool
-async def check_refund_eligibility(
-    order_id: str,
-    customer_id: str,
-    reason_code: str,
-) -> str:
+async def check_refund_eligibility(order_id: str, customer_id: str, reason_code: str) -> str:
     """
     The core policy engine. Validates whether a refund is eligible based on
     the ShopWave refund policy. MUST be called before making any refund decision.
@@ -154,204 +140,8 @@ async def check_refund_eligibility(
         reason_code: One of: WRONG_ITEM, DAMAGED_ARRIVAL, DEFECTIVE, CHANGE_OF_MIND,
                      NOT_AS_DESCRIBED, MISSING_PARTS, SUBSCRIPTION_CANCEL
     """
-    async with AsyncSessionLocal() as session:
-        order = await session.get(Order, order_id)
-        customer = await session.get(Customer, customer_id)
-
-        if not order or not customer:
-            return json.dumps({
-                "eligible": False,
-                "decision_type": "deny",
-                "denial_reason": "Order or customer not found in system."
-            })
-
-        # Load refund history for fraud check
-        refund_result = await session.execute(
-            select(RefundHistory).where(RefundHistory.customer_id == customer_id)
-        )
-        refund_history = refund_result.scalars().all()
-
-    days_since_delivery = _days_between(order.delivered_date) if order.delivered_date else 999
-    is_international = order.is_international
-    return_window = 14 if is_international else 30
-    items = order.items or []
-
-    # ── RULE: Fraud flag ──────────────────────────────────────────────────────
-    if customer.fraud_flag:
-        return json.dumps({
-            "eligible": False,
-            "decision_type": "deny",
-            "denial_reason": "Account has an active fraud flag. Refund cannot be processed.",
-            "policy_section": "Section 7"
-        })
-
-    # ── RULE: 3+ refunds in 90 days ───────────────────────────────────────────
-    ninety_days_ago = (date.today() - timedelta(days=90)).isoformat()
-    recent_refunds = [r for r in refund_history if r.date >= ninety_days_ago and r.status == "approved"]
-    if len(recent_refunds) >= 3:
-        return json.dumps({
-            "eligible": False,
-            "decision_type": "escalate",
-            "denial_reason": f"Customer has {len(recent_refunds)} approved refunds in the last 90 days. Fraud prevention escalation required.",
-            "policy_section": "Section 7"
-        })
-
-    # ── RULE: Digital products ────────────────────────────────────────────────
-    has_digital = any(item.get("is_digital", False) for item in items)
-    if has_digital:
-        return json.dumps({
-            "eligible": False,
-            "decision_type": "deny",
-            "denial_reason": "Digital products and software licenses are non-refundable under all circumstances.",
-            "policy_section": "Section 3.1"
-        })
-
-    # ── RULE: Final sale items ────────────────────────────────────────────────
-    has_final_sale = any(item.get("is_final_sale", False) for item in items)
-    if has_final_sale:
-        return json.dumps({
-            "eligible": False,
-            "decision_type": "deny",
-            "denial_reason": "Items marked as Final Sale are not eligible for returns or refunds.",
-            "policy_section": "Section 3.2"
-        })
-
-    # ── RULE: High-value order escalation ────────────────────────────────────
-    if order.total > 500:
-        return json.dumps({
-            "eligible": None,
-            "decision_type": "escalate",
-            "escalation_reason": f"Order total ${order.total:.2f} exceeds $500 threshold. Human agent review required.",
-            "policy_section": "Section 8"
-        })
-
-    # ── RULE: Return window check ─────────────────────────────────────────────
-    if days_since_delivery > return_window:
-        # VIP exception?
-        if customer.loyalty_tier in ("Gold", "Platinum"):
-            if days_since_delivery <= return_window + 15:
-                return json.dumps({
-                    "eligible": None,
-                    "decision_type": "escalate",
-                    "escalation_reason": (
-                        f"VIP customer ({customer.loyalty_tier}) is {days_since_delivery - return_window} days "
-                        f"past the {return_window}-day window. Eligible for VIP exception review — "
-                        "escalate to human agent for store credit consideration."
-                    ),
-                    "policy_section": "Section 6a"
-                })
-        return json.dumps({
-            "eligible": False,
-            "decision_type": "deny",
-            "denial_reason": (
-                f"Return window expired. Item was delivered {days_since_delivery} days ago. "
-                f"{'International' if is_international else 'Domestic'} orders must be returned within {return_window} days."
-            ),
-            "policy_section": "Section 1"
-        })
-
-    # ── RULE: Reason-specific checks ──────────────────────────────────────────
-    if reason_code == "DAMAGED_ARRIVAL":
-        if days_since_delivery > 3:
-            return json.dumps({
-                "eligible": False,
-                "decision_type": "deny",
-                "denial_reason": f"Damaged arrival must be reported within 72 hours of delivery. This was reported {days_since_delivery} days after delivery.",
-                "policy_section": "Section 2"
-            })
-        refund_amount = order.total
-        return json.dumps({
-            "eligible": True,
-            "decision_type": "approve",
-            "refund_amount": refund_amount,
-            "refund_type": "full",
-            "note": "Full refund approved. No return required if photo evidence provided.",
-            "policy_section": "Section 2"
-        })
-
-    elif reason_code == "DEFECTIVE":
-        days_since_order = _days_between(order.date)
-        if days_since_order > 90:
-            return json.dumps({
-                "eligible": False,
-                "decision_type": "deny",
-                "denial_reason": f"Defect reported {days_since_order} days after purchase. 90-day warranty window has expired.",
-                "policy_section": "Section 2"
-            })
-        return json.dumps({
-            "eligible": True,
-            "decision_type": "approve",
-            "refund_amount": order.total,
-            "refund_type": "full_or_replacement",
-            "policy_section": "Section 2"
-        })
-
-    elif reason_code == "WRONG_ITEM":
-        return json.dumps({
-            "eligible": True,
-            "decision_type": "approve",
-            "refund_amount": order.total,
-            "refund_type": "full",
-            "note": "Free return label will be issued. No return required for orders under $50.",
-            "policy_section": "Section 2"
-        })
-
-    elif reason_code == "NOT_AS_DESCRIBED":
-        return json.dumps({
-            "eligible": True,
-            "decision_type": "approve",
-            "refund_amount": order.total,
-            "refund_type": "full",
-            "note": "Free return label will be issued.",
-            "policy_section": "Section 2"
-        })
-
-    elif reason_code == "MISSING_PARTS":
-        return json.dumps({
-            "eligible": True,
-            "decision_type": "approve",
-            "refund_amount": order.total,
-            "refund_type": "full_or_parts_sent",
-            "policy_section": "Section 2"
-        })
-
-    elif reason_code == "CHANGE_OF_MIND":
-        restocking_fee = round(order.total * 0.15, 2)
-        refund_amount = round(order.total - restocking_fee, 2)
-        return json.dumps({
-            "eligible": True,
-            "decision_type": "approve",
-            "refund_amount": refund_amount,
-            "refund_type": "partial",
-            "restocking_fee": restocking_fee,
-            "note": f"15% restocking fee of ${restocking_fee:.2f} applies. Refund: ${refund_amount:.2f}.",
-            "policy_section": "Section 2"
-        })
-
-    elif reason_code == "SUBSCRIPTION_CANCEL":
-        days_since_charge = _days_between(order.date)
-        if days_since_charge <= 1:
-            return json.dumps({
-                "eligible": True,
-                "decision_type": "approve",
-                "refund_amount": order.total,
-                "refund_type": "full",
-                "note": "Cancelled within 24 hours. Full refund approved.",
-                "policy_section": "Section 5"
-            })
-        return json.dumps({
-            "eligible": False,
-            "decision_type": "deny",
-            "denial_reason": "Subscription was not cancelled within the 24-hour window. Current billing period is non-refundable. Subscription will not auto-renew.",
-            "policy_section": "Section 5"
-        })
-
-    else:
-        return json.dumps({
-            "eligible": False,
-            "decision_type": "deny",
-            "denial_reason": f"Unknown reason code '{reason_code}'. Please clarify the issue."
-        })
+    _, _, result = await _evaluate(order_id, customer_id, reason_code)
+    return json.dumps(result.to_dict())
 
 
 @tool
@@ -367,27 +157,20 @@ async def check_fraud_risk(customer_id: str) -> str:
         customer = await session.get(Customer, customer_id)
         if not customer:
             return json.dumps({"error": "Customer not found"})
+        refunds = await _load_refunds(session, customer_id)
 
-        refund_result = await session.execute(
-            select(RefundHistory).where(RefundHistory.customer_id == customer_id)
-        )
-        refund_history = refund_result.scalars().all()
-
-    ninety_days_ago = (date.today() - timedelta(days=90)).isoformat()
-    recent = [r for r in refund_history if r.date >= ninety_days_ago]
-    total_refunded_90d = sum(r.amount or 0 for r in recent if r.status == "approved")
+    cutoff = (today() - timedelta(days=FRAUD_LOOKBACK_DAYS)).isoformat()
+    recent = [r for r in refunds if r.date >= cutoff]
+    total_refunded_90d = round(sum(r.amount or 0 for r in recent if r.status == "approved"), 2)
 
     risk_score = 0
     flags = []
-
     if customer.fraud_flag:
         risk_score += 100
         flags.append("Account has a pre-existing fraud flag")
-
     if len(recent) >= 3:
         risk_score += 60
         flags.append(f"{len(recent)} refunds in last 90 days")
-
     if total_refunded_90d > 300:
         risk_score += 30
         flags.append(f"${total_refunded_90d:.2f} refunded in last 90 days")
@@ -406,76 +189,82 @@ async def check_fraud_risk(customer_id: str) -> str:
 
 @tool
 async def process_refund_decision(
-    session_id: str,
+    session_id: Annotated[str, InjectedToolArg],
     order_id: str,
     customer_id: str,
     decision: str,
-    refund_amount: Optional[float],
+    reason_code: str,
     reason: str,
 ) -> str:
     """
     Finalizes and records the refund decision. This MUST be the last tool call
-    before responding to the customer. It persists the outcome to the database.
+    before responding to the customer. The refund amount is set by the policy
+    engine; an "approve" the policy does not allow is recorded as the policy
+    outcome instead.
 
     Args:
-        session_id: The current chat session ID
         order_id: The order being acted on
         customer_id: The customer ID
         decision: One of: approve | deny | escalate
-        refund_amount: The approved refund amount (or null if denied/escalated)
+        reason_code: The reason code passed to check_refund_eligibility
         reason: The policy-based reason for this decision
     """
-    from app.database.models import ChatSession, RefundHistory
-    from datetime import datetime, timezone
+    requested = decision.strip().lower()
+    if requested not in {"approve", "deny", "escalate"}:
+        return json.dumps({
+            "success": False,
+            "error": f"Invalid decision '{decision}'. Must be: approve | deny | escalate",
+        })
 
-    valid_decisions = {"approve", "deny", "escalate"}
-    if decision not in valid_decisions:
-        return json.dumps({"success": False, "error": f"Invalid decision '{decision}'. Must be: approve | deny | escalate"})
+    order, customer, policy = await _evaluate(order_id, customer_id, reason_code)
 
-    async with AsyncSessionLocal() as db_session:
-        # Update or create chat session outcome
-        chat_session = await db_session.get(ChatSession, session_id)
+    final = requested
+    if requested == "approve" and policy.decision != "approve":
+        final = policy.decision
+    refund_amount = policy.refund_amount if final == "approve" else None
+    final_reason = reason if final == requested else policy.reason
+
+    async with AsyncSessionLocal() as db:
+        chat_session = await db.get(ChatSession, session_id)
         if chat_session:
-            chat_session.outcome = decision
+            chat_session.outcome = final
             chat_session.refund_amount = refund_amount
             chat_session.ended_at = datetime.now(timezone.utc)
-            chat_session.customer_id = customer_id
+            chat_session.customer_id = customer.customer_id if customer else None
 
-        # If approved, record in refund history
-        if decision == "approve" and refund_amount:
-            new_refund = RefundHistory(
-                customer_id=customer_id,
-                order_id=order_id,
-                date=date.today().isoformat(),
-                reason=reason,
+        if final == "approve":
+            db.add(RefundHistory(
+                customer_id=customer.customer_id,
+                order_id=order.order_id,
+                date=today().isoformat(),
+                reason=normalize_reason(reason_code),
                 amount=refund_amount,
                 status="approved",
-            )
-            db_session.add(new_refund)
-
-        await db_session.commit()
+            ))
+        await db.commit()
 
     result = {
         "success": True,
-        "decision": decision,
-        "order_id": order_id,
-        "customer_id": customer_id,
+        "decision": final,
+        "requested_decision": requested,
+        "policy_override": final != requested,
+        "order_id": order.order_id if order else order_id,
+        "customer_id": customer.customer_id if customer else customer_id,
+        "policy_section": policy.policy_section,
     }
-
-    if decision == "approve":
+    if final == "approve":
         result["refund_amount"] = refund_amount
         result["message"] = f"Refund of ${refund_amount:.2f} approved and recorded."
         result["processing_time"] = "5–7 business days"
-    elif decision == "deny":
-        result["message"] = f"Refund denied. Reason: {reason}"
-    elif decision == "escalate":
-        result["message"] = f"Case escalated to human agent. Reason: {reason}"
-        result["escalation_ticket"] = f"ESC-{order_id}-{date.today().strftime('%Y%m%d')}"
+    elif final == "deny":
+        result["message"] = f"Refund denied. Reason: {final_reason}"
+    else:
+        result["message"] = f"Case escalated to human agent. Reason: {final_reason}"
+        result["escalation_ticket"] = f"ESC-{result['order_id']}-{today().strftime('%Y%m%d')}"
 
     return json.dumps(result)
 
 
-# All tools exported for graph registration
 ALL_TOOLS = [
     search_customer,
     get_customer_profile,
