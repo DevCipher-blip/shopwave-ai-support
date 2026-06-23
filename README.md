@@ -1,6 +1,10 @@
-# ShopWave AI Refund Agent
+# Support conversations and refund decisions
 
-> **AI-powered customer support agent** for automated e-commerce refund processing — built with LangGraph, Groq (Llama 3.3 70B + Whisper), FastAPI, and Next.js.
+## Separate conversation from policy
+
+The browser sends support requests through the FastAPI service, which coordinates customer/order tools and conversation state. Start with [the tool functions](backend/app/agent/tools.py), [the agent flow](backend/app/agent/graph.py), and [the API/session boundary](backend/app/main.py).
+
+Refund eligibility and fraud checks are inspectable code paths, so demonstrate a successful case and a rejected one with their stored decisions. The in-process session locks need a separate design for multiple API workers. Treat model wording, a recorded refund decision, and any eventual payment-provider action as distinct steps.
 
 ## Live Demo
 
