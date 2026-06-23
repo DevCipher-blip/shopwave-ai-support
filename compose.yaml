@@ -1,0 +1,38 @@
+# docker compose up --build
+# Defaults run the offline demo (fake model + fake speech-to-text).
+# Put LLM_PROVIDER=groq, STT_PROVIDER=groq and GROQ_API_KEY in .env for the real thing.
+# WEB_PORT / API_PORT change the host ports (default 3000 / 8000).
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      LLM_PROVIDER: ${LLM_PROVIDER:-fake}
+      STT_PROVIDER: ${STT_PROVIDER:-fake}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      CORS_ORIGINS: ${WEB_ORIGIN:-http://localhost:${WEB_PORT:-3000}}
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    volumes:
+      - api-data:/app/var
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:${API_PORT:-8000}}
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  api-data:

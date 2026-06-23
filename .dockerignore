@@ -1,0 +1,15 @@
+.git
+**/node_modules
+**/.next
+**/.venv
+**/venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.env
+**/.env.*
+!**/.env.example
+**/*.db
+**/*.sqlite3
+docs
+backend/tests
