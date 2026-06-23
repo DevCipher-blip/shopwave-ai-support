@@ -1,21 +1,24 @@
 """Speech-to-text for the voice input: Groq Whisper, or a fixed fake for demos and tests."""
+
 from collections.abc import Awaitable, Callable
 
 from app.config import settings
 
 Transcriber = Callable[[str, bytes], Awaitable[str]]
 
-ALLOWED_AUDIO_TYPES = frozenset({
-    "audio/webm",
-    "audio/ogg",
-    "audio/mp4",
-    "audio/x-m4a",
-    "audio/mpeg",
-    "audio/mp3",
-    "audio/wav",
-    "audio/x-wav",
-    "audio/wave",
-})
+ALLOWED_AUDIO_TYPES = frozenset(
+    {
+        "audio/webm",
+        "audio/ogg",
+        "audio/mp4",
+        "audio/x-m4a",
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/wav",
+        "audio/x-wav",
+        "audio/wave",
+    }
+)
 
 FAKE_TRANSCRIPT = "Hi, my order ORD-10015 arrived damaged and I would like a refund."
 

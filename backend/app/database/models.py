@@ -1,9 +1,7 @@
-from sqlalchemy import (
-    Column, String, Float, Boolean, Integer,
-    DateTime, ForeignKey, JSON, Text
-)
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+
 from app.database.db import Base
 
 
@@ -85,8 +83,8 @@ class AgentLog(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(String, ForeignKey("chat_sessions.session_id"), nullable=False)
-    node = Column(String, nullable=False)      # graph node name
-    event_type = Column(String, nullable=False) # tool_call | tool_result | reasoning | decision
+    node = Column(String, nullable=False)  # graph node name
+    event_type = Column(String, nullable=False)  # tool_call | tool_result | reasoning | decision
     content = Column(JSON, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

@@ -6,23 +6,27 @@ check_refund_eligibility and process_refund_decision call evaluate_refund,
 so a prompt that talks the model into "approving" something cannot get past
 these rules.
 """
+
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
-from typing import Any, Literal, Protocol, Sequence
+from typing import Any, Literal, Protocol
 
 Decision = Literal["approve", "deny", "escalate"]
 
-REASON_CODES = frozenset({
-    "WRONG_ITEM",
-    "DAMAGED_ARRIVAL",
-    "DEFECTIVE",
-    "CHANGE_OF_MIND",
-    "NOT_AS_DESCRIBED",
-    "MISSING_PARTS",
-    "SUBSCRIPTION_CANCEL",
-})
+REASON_CODES = frozenset(
+    {
+        "WRONG_ITEM",
+        "DAMAGED_ARRIVAL",
+        "DEFECTIVE",
+        "CHANGE_OF_MIND",
+        "NOT_AS_DESCRIBED",
+        "MISSING_PARTS",
+        "SUBSCRIPTION_CANCEL",
+    }
+)
 
 DOMESTIC_WINDOW_DAYS = 30
 INTERNATIONAL_WINDOW_DAYS = 14
@@ -162,8 +166,11 @@ def evaluate_refund(
     if reason == "SUBSCRIPTION_CANCEL":
         if (today - order_date).days <= SUBSCRIPTION_CANCEL_DAYS:
             return PolicyResult(
-                "approve", "Cancelled within 24 hours. Full refund approved.", "Section 5",
-                round(order.total, 2), "full",
+                "approve",
+                "Cancelled within 24 hours. Full refund approved.",
+                "Section 5",
+                round(order.total, 2),
+                "full",
             )
         return _deny(
             "Subscription was not cancelled within the 24-hour window. Current billing period is "
@@ -200,15 +207,18 @@ def evaluate_refund(
                 f"{days_since_delivery} days after delivery.",
                 "Section 2",
             )
-        return _approve(order.total, "full", "Damaged on arrival, reported within 72 hours.",
-                        note="No return required if photo evidence is provided.")
+        return _approve(
+            order.total,
+            "full",
+            "Damaged on arrival, reported within 72 hours.",
+            note="No return required if photo evidence is provided.",
+        )
 
     if reason == "DEFECTIVE":
         days_since_order = (today - order_date).days
         if days_since_order > WARRANTY_DAYS:
             return _deny(
-                f"Defect reported {days_since_order} days after purchase. "
-                "90-day warranty window has expired.",
+                f"Defect reported {days_since_order} days after purchase. 90-day warranty window has expired.",
                 "Section 2",
             )
         return _approve(order.total, "full_or_replacement", "Defect within the 90-day warranty.")
@@ -217,15 +227,20 @@ def evaluate_refund(
         fee = round(order.total * RESTOCKING_FEE_RATE, 2)
         amount = round(order.total - fee, 2)
         return _approve(
-            amount, "partial", "Change of mind within the return window.",
+            amount,
+            "partial",
+            "Change of mind within the return window.",
             restocking_fee=fee,
             note=f"15% restocking fee of ${fee:.2f} applies. Refund: ${amount:.2f}.",
         )
 
     if reason == "WRONG_ITEM":
-        return _approve(order.total, "full", "Wrong item received.",
-                        note="Free return label will be issued. No return required for orders under $50.")
+        return _approve(
+            order.total,
+            "full",
+            "Wrong item received.",
+            note="Free return label will be issued. No return required for orders under $50.",
+        )
     if reason == "NOT_AS_DESCRIBED":
-        return _approve(order.total, "full", "Item not as described.",
-                        note="Free return label will be issued.")
+        return _approve(order.total, "full", "Item not as described.", note="Free return label will be issued.")
     return _approve(order.total, "full_or_parts_sent", "Item arrived with missing parts.")

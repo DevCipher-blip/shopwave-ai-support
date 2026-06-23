@@ -1,6 +1,7 @@
 """
 FastAPI application — chat, admin, voice endpoints.
 """
+
 import asyncio
 import json
 import re
@@ -13,17 +14,16 @@ from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Query, Req
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
-from sse_starlette.sse import EventSourceResponse
-from sqlalchemy import select, func, desc
+from sqlalchemy import desc, func, select
 from sqlalchemy.exc import IntegrityError
+from sse_starlette.sse import EventSourceResponse
 
-from app.config import settings
-from app.database.db import engine, AsyncSessionLocal
-from app.database.models import AgentLog, Base, ChatSession, Customer, Message
 from app.agent.graph import run_agent
+from app.config import settings
+from app.database.db import AsyncSessionLocal, engine
+from app.database.models import AgentLog, Base, ChatSession, Customer, Message
 from app.database.seed import seed
-from app.stt import ALLOWED_AUDIO_TYPES, TranscriptionError, Transcriber, get_transcriber, sniff_audio
-
+from app.stt import ALLOWED_AUDIO_TYPES, Transcriber, TranscriptionError, get_transcriber, sniff_audio
 
 # ── Session log broadcast registry ──────────────────────────────────────────
 # Maps session_id → list of asyncio.Queue for SSE subscribers
@@ -38,8 +38,7 @@ SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
 MAX_MESSAGE_LENGTH = 2000
 SAFE_FAILURE_RESPONSE = (
-    "I couldn't complete that request. Please try again with your order number "
-    "or the email address on the order."
+    "I couldn't complete that request. Please try again with your order number or the email address on the order."
 )
 
 
@@ -86,6 +85,7 @@ admin = APIRouter(prefix="/api/admin", dependencies=[Depends(require_admin)])
 
 # ── Pydantic schemas ─────────────────────────────────────────────────────────
 
+
 class ChatRequest(BaseModel):
     session_id: str | None = None
     message: str = Field(min_length=1, max_length=MAX_MESSAGE_LENGTH)
@@ -123,6 +123,7 @@ class ChatMessageResponse(BaseModel):
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 async def _get_or_create_session(session_id: str | None) -> str:
     sid = _normalize_session_id(session_id) or str(uuid.uuid4())
@@ -167,15 +168,8 @@ def _get_session_lock(session_id: str) -> asyncio.Lock:
 
 async def _load_history(session_id: str) -> list[dict]:
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(Message)
-            .where(Message.session_id == session_id)
-            .order_by(Message.id)
-        )
-        return [
-            {"role": message.role, "content": message.content}
-            for message in result.scalars().all()
-        ]
+        result = await db.execute(select(Message).where(Message.session_id == session_id).order_by(Message.id))
+        return [{"role": message.role, "content": message.content} for message in result.scalars().all()]
 
 
 async def _persist_turn(session_id: str, user_message: str, response_text: str) -> None:
@@ -192,9 +186,7 @@ async def _load_session_summary(session_id: str) -> ChatSessionResponse:
             raise HTTPException(status_code=404, detail="Session not found")
 
         message_count = (
-            await db.execute(
-                select(func.count(Message.id)).where(Message.session_id == session_id)
-            )
+            await db.execute(select(func.count(Message.id)).where(Message.session_id == session_id))
         ).scalar() or 0
 
     return ChatSessionResponse(
@@ -248,6 +240,7 @@ async def _broadcast_log(session_id: str, log: dict):
 
 # ── Chat endpoint ─────────────────────────────────────────────────────────────
 
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     session_id = await _get_or_create_session(req.session_id)
@@ -270,9 +263,7 @@ async def get_chat_messages(session_id: str):
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(
-            select(Message)
-            .where(Message.session_id == normalized_session_id)
-            .order_by(Message.id)
+            select(Message).where(Message.session_id == normalized_session_id).order_by(Message.id)
         )
         messages = result.scalars().all()
 
@@ -288,6 +279,7 @@ async def get_chat_messages(session_id: str):
 
 
 # ── Streaming chat endpoint (SSE) ─────────────────────────────────────────────
+
 
 @app.get("/api/chat/stream")
 async def chat_stream(session_id: str, message: str):
@@ -311,9 +303,7 @@ async def chat_stream(session_id: str, message: str):
                 _log_subscribers[sid] = []
             _log_subscribers[sid].append(log_queue)
 
-            agent_task = asyncio.create_task(
-                run_agent(sid, normalized_message, history, log_queue)
-            )
+            agent_task = asyncio.create_task(run_agent(sid, normalized_message, history, log_queue))
 
             try:
                 while True:
@@ -348,6 +338,7 @@ async def chat_stream(session_id: str, message: str):
 
 # ── Admin SSE stream ──────────────────────────────────────────────────────────
 
+
 @admin.get("/stream")
 async def admin_stream():
     """SSE stream for the admin dashboard: every agent event across all sessions.
@@ -371,12 +362,11 @@ async def admin_stream():
 
 # ── Admin REST endpoints ──────────────────────────────────────────────────────
 
+
 @admin.get("/sessions")
 async def list_sessions(limit: Annotated[int, Query(ge=1, le=100)] = 20):
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(ChatSession).order_by(desc(ChatSession.started_at)).limit(limit)
-        )
+        result = await db.execute(select(ChatSession).order_by(desc(ChatSession.started_at)).limit(limit))
         sessions = result.scalars().all()
 
     return [
@@ -399,11 +389,7 @@ async def get_session_logs(session_id: str):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(AgentLog)
-            .where(AgentLog.session_id == session_id)
-            .order_by(AgentLog.id)
-        )
+        result = await db.execute(select(AgentLog).where(AgentLog.session_id == session_id).order_by(AgentLog.id))
         logs = result.scalars().all()
 
     return [
@@ -422,18 +408,18 @@ async def get_session_logs(session_id: str):
 async def get_stats():
     async with AsyncSessionLocal() as db:
         total_sessions = (await db.execute(select(func.count(ChatSession.session_id)))).scalar()
-        approved = (await db.execute(
-            select(func.count(ChatSession.session_id)).where(ChatSession.outcome == "approve")
-        )).scalar()
-        denied = (await db.execute(
-            select(func.count(ChatSession.session_id)).where(ChatSession.outcome == "deny")
-        )).scalar()
-        escalated = (await db.execute(
-            select(func.count(ChatSession.session_id)).where(ChatSession.outcome == "escalate")
-        )).scalar()
-        total_refunded = (await db.execute(
-            select(func.sum(ChatSession.refund_amount)).where(ChatSession.outcome == "approve")
-        )).scalar() or 0.0
+        approved = (
+            await db.execute(select(func.count(ChatSession.session_id)).where(ChatSession.outcome == "approve"))
+        ).scalar()
+        denied = (
+            await db.execute(select(func.count(ChatSession.session_id)).where(ChatSession.outcome == "deny"))
+        ).scalar()
+        escalated = (
+            await db.execute(select(func.count(ChatSession.session_id)).where(ChatSession.outcome == "escalate"))
+        ).scalar()
+        total_refunded = (
+            await db.execute(select(func.sum(ChatSession.refund_amount)).where(ChatSession.outcome == "approve"))
+        ).scalar() or 0.0
         customer_count = (await db.execute(select(func.count(Customer.customer_id)))).scalar()
 
     return {
@@ -517,6 +503,7 @@ async def transcribe_audio(
 
 
 # ── Health check ─────────────────────────────────────────────────────────────
+
 
 @app.get("/api/health")
 async def health():

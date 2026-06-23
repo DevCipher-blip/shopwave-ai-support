@@ -4,8 +4,9 @@ Agent tools registered with LangChain's @tool decorator.
 Each tool returns a JSON string so the model sees exactly what the admin
 dashboard logs.
 """
+
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated
 
 from langchain_core.tools import InjectedToolArg, tool
@@ -21,9 +22,7 @@ def today() -> date:
 
 
 async def _load_refunds(session, customer_id: str) -> list[RefundHistory]:
-    result = await session.execute(
-        select(RefundHistory).where(RefundHistory.customer_id == customer_id)
-    )
+    result = await session.execute(select(RefundHistory).where(RefundHistory.customer_id == customer_id))
     return list(result.scalars().all())
 
 
@@ -44,12 +43,14 @@ async def search_customer(email: str) -> str:
     if not customer:
         return json.dumps({"found": False, "message": "No customer found for that email address."})
 
-    return json.dumps({
-        "found": True,
-        "customer_id": customer.customer_id,
-        "name": customer.name,
-        "loyalty_tier": customer.loyalty_tier,
-    })
+    return json.dumps(
+        {
+            "found": True,
+            "customer_id": customer.customer_id,
+            "name": customer.name,
+            "loyalty_tier": customer.loyalty_tier,
+        }
+    )
 
 
 @tool
@@ -70,21 +71,23 @@ async def get_customer_profile(customer_id: str) -> str:
     cutoff = (today() - timedelta(days=FRAUD_LOOKBACK_DAYS)).isoformat()
     recent = [r for r in refunds if r.date >= cutoff and r.status == "approved"]
 
-    return json.dumps({
-        "found": True,
-        "customer_id": customer.customer_id,
-        "name": customer.name,
-        "loyalty_tier": customer.loyalty_tier,
-        "account_created": customer.account_created,
-        "total_orders": customer.total_orders,
-        "total_spent": customer.total_spent,
-        "fraud_flag": customer.fraud_flag,
-        "refund_history": [
-            {"order_id": r.order_id, "date": r.date, "reason": r.reason, "amount": r.amount, "status": r.status}
-            for r in refunds
-        ],
-        "recent_refund_count_90d": len(recent),
-    })
+    return json.dumps(
+        {
+            "found": True,
+            "customer_id": customer.customer_id,
+            "name": customer.name,
+            "loyalty_tier": customer.loyalty_tier,
+            "account_created": customer.account_created,
+            "total_orders": customer.total_orders,
+            "total_spent": customer.total_spent,
+            "fraud_flag": customer.fraud_flag,
+            "refund_history": [
+                {"order_id": r.order_id, "date": r.date, "reason": r.reason, "amount": r.amount, "status": r.status}
+                for r in refunds
+            ],
+            "recent_refund_count_90d": len(recent),
+        }
+    )
 
 
 @tool
@@ -105,19 +108,21 @@ async def get_order_details(order_id: str) -> str:
     delivered = parse_date(order.delivered_date)
     days_since_delivery = (today() - delivered).days if delivered else -1
 
-    return json.dumps({
-        "found": True,
-        "order_id": order.order_id,
-        "customer_id": order.customer_id,
-        "order_date": order.date,
-        "delivered_date": order.delivered_date,
-        "days_since_delivery": days_since_delivery,
-        "status": order.status,
-        "total": order.total,
-        "shipping": order.shipping,
-        "is_international": order.is_international,
-        "items": order.items,
-    })
+    return json.dumps(
+        {
+            "found": True,
+            "order_id": order.order_id,
+            "customer_id": order.customer_id,
+            "order_date": order.date,
+            "delivered_date": order.delivered_date,
+            "days_since_delivery": days_since_delivery,
+            "status": order.status,
+            "total": order.total,
+            "shipping": order.shipping,
+            "is_international": order.is_international,
+            "items": order.items,
+        }
+    )
 
 
 async def _evaluate(order_id: str, customer_id: str, reason_code: str):
@@ -177,14 +182,16 @@ async def check_fraud_risk(customer_id: str) -> str:
 
     risk_level = "HIGH" if risk_score >= 80 else "MEDIUM" if risk_score >= 40 else "LOW"
 
-    return json.dumps({
-        "customer_id": customer_id,
-        "risk_level": risk_level,
-        "risk_score": risk_score,
-        "flags": flags,
-        "recent_refund_count": len(recent),
-        "total_refunded_90d": total_refunded_90d,
-    })
+    return json.dumps(
+        {
+            "customer_id": customer_id,
+            "risk_level": risk_level,
+            "risk_score": risk_score,
+            "flags": flags,
+            "recent_refund_count": len(recent),
+            "total_refunded_90d": total_refunded_90d,
+        }
+    )
 
 
 @tool
@@ -211,10 +218,12 @@ async def process_refund_decision(
     """
     requested = decision.strip().lower()
     if requested not in {"approve", "deny", "escalate"}:
-        return json.dumps({
-            "success": False,
-            "error": f"Invalid decision '{decision}'. Must be: approve | deny | escalate",
-        })
+        return json.dumps(
+            {
+                "success": False,
+                "error": f"Invalid decision '{decision}'. Must be: approve | deny | escalate",
+            }
+        )
 
     order, customer, policy = await _evaluate(order_id, customer_id, reason_code)
 
@@ -229,18 +238,20 @@ async def process_refund_decision(
         if chat_session:
             chat_session.outcome = final
             chat_session.refund_amount = refund_amount
-            chat_session.ended_at = datetime.now(timezone.utc)
+            chat_session.ended_at = datetime.now(UTC)
             chat_session.customer_id = customer.customer_id if customer else None
 
         if final == "approve":
-            db.add(RefundHistory(
-                customer_id=customer.customer_id,
-                order_id=order.order_id,
-                date=today().isoformat(),
-                reason=normalize_reason(reason_code),
-                amount=refund_amount,
-                status="approved",
-            ))
+            db.add(
+                RefundHistory(
+                    customer_id=customer.customer_id,
+                    order_id=order.order_id,
+                    date=today().isoformat(),
+                    reason=normalize_reason(reason_code),
+                    amount=refund_amount,
+                    status="approved",
+                )
+            )
         await db.commit()
 
     result = {

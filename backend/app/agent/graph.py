@@ -8,11 +8,12 @@ LangGraph refund agent.
 Each step is logged to the database and pushed onto an asyncio.Queue that
 the chat and admin SSE streams read from.
 """
+
 import asyncio
 import json
 import re
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -28,6 +29,9 @@ from app.database.models import AgentLog, Customer
 
 MAX_ITERATIONS = 10
 TOOLS_BY_NAME = {t.name: t for t in ALL_TOOLS}
+ASK_FOR_IDENTIFIER = (
+    "Please share your order number or the email address on the order, and tell me what you need help with."
+)
 GAVE_UP_RESPONSE = "I apologize, I was unable to process your request. Please try again or contact support."
 
 Emit = Callable[[str, str, dict], Awaitable[None]]
@@ -147,10 +151,9 @@ async def _load_last_session_order_id(session_id: str) -> str | None:
 
 def _format_order_details(order: dict) -> str:
     items = order.get("items") or []
-    item_summary = ", ".join(
-        f"{item.get('name', 'Item')} x{item.get('quantity', 1)}"
-        for item in items
-    ) or "No line items found."
+    item_summary = (
+        ", ".join(f"{item.get('name', 'Item')} x{item.get('quantity', 1)}" for item in items) or "No line items found."
+    )
     shipping_scope = "international" if order.get("is_international") else "domestic"
     delivered_date = order.get("delivered_date") or "Not delivered yet"
     return (
@@ -166,9 +169,7 @@ def _format_order_details(order: dict) -> str:
 
 async def _lookup_customer_by_email(email: str) -> Customer | None:
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(Customer).where(Customer.email == email.lower())
-        )
+        result = await db.execute(select(Customer).where(Customer.email == email.lower()))
         return result.scalar_one_or_none()
 
 
@@ -192,8 +193,7 @@ def _email_in_conversation(user_message: str, history: list[dict]) -> str | None
 
 
 def _name_in_conversation(user_message: str, history: list[dict]) -> str | None:
-    for text in [user_message, *[m.get("content", "") for m in history[-8:]
-                                  if m.get("role") == "user"]]:
+    for text in [user_message, *[m.get("content", "") for m in history[-8:] if m.get("role") == "user"]]:
         name = _extract_name_intro(text)
         if name:
             return name
@@ -254,10 +254,7 @@ async def _maybe_handle_without_llm(
                 # Verified — let the LLM continue (it now has email context).
                 return None
             elif customer:
-                return (
-                    "The name and email address don't match our records. "
-                    "Please double-check and try again."
-                )
+                return "The name and email address don't match our records. Please double-check and try again."
         # Email without a prior name claim — pass through to LLM normally.
         return None
 
@@ -281,20 +278,26 @@ async def _maybe_handle_without_llm(
             order = None
 
         if not isinstance(order, dict) or not order.get("found"):
-            return f"I couldn't find order {order_id}. Please check the order number or share the email address on the order."
+            return (
+                f"I couldn't find order {order_id}. "
+                "Please check the order number or share the email address on the order."
+            )
 
         return _format_order_details(order)
 
     if not _has_hard_identifier(user_message, history):
-        return "Please share your order number or the email address on the order, and tell me what you need help with."
+        return ASK_FOR_IDENTIFIER
 
     return None
 
 
 def _fallback_response(user_message: str, history: list[dict]) -> str:
     if not _has_hard_identifier(user_message, history):
-        return "Please share your order number or the email address on the order, and tell me what you need help with."
-    return "I hit a tool-calling issue while processing that. Please restate the request with the order number and the exact issue you want help with."
+        return ASK_FOR_IDENTIFIER
+    return (
+        "I hit a tool-calling issue while processing that. "
+        "Please restate the request with the order number and the exact issue you want help with."
+    )
 
 
 def get_chat_model() -> BaseChatModel:
@@ -309,7 +312,7 @@ def get_chat_model() -> BaseChatModel:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 async def _save_log(session_id: str, node: str, event_type: str, content: dict) -> None:
@@ -343,37 +346,53 @@ def route_after_agent(state: AgentState) -> str:
     return "finalize"
 
 
-def build_graph(model: BaseChatModel, *, session_id: str, user_message: str,
-                history: list[dict], emit: Emit):
+def build_graph(model: BaseChatModel, *, session_id: str, user_message: str, history: list[dict], emit: Emit):
     llm = model.bind_tools(ALL_TOOLS)
 
     async def triage(state: AgentState) -> dict:
         text = await _maybe_handle_without_llm(session_id, user_message, history)
         if not text:
             return {}
-        await emit("decision", "decision", {
-            "type": "decision", "node": "decision", "decision": "informational",
-            "content": "Handled without refund decision.",
-        })
+        await emit(
+            "decision",
+            "decision",
+            {
+                "type": "decision",
+                "node": "decision",
+                "decision": "informational",
+                "content": "Handled without refund decision.",
+            },
+        )
         return {"response": text, "decision": "informational"}
 
     async def agent(state: AgentState) -> dict:
         iteration = state.get("iterations", 0) + 1
-        await emit("agent", "reasoning", {
-            "type": "reasoning", "node": "agent", "iteration": iteration,
-            "content": f"Iteration {iteration}: Calling LLM to decide next action...",
-        })
+        await emit(
+            "agent",
+            "reasoning",
+            {
+                "type": "reasoning",
+                "node": "agent",
+                "iteration": iteration,
+                "content": f"Iteration {iteration}: Calling LLM to decide next action...",
+            },
+        )
         try:
             response = await llm.ainvoke(state["messages"])
         except Exception as exc:  # provider/network errors end the turn with a safe reply
             body = getattr(exc, "body", None) or {}
             detail = body.get("failed_generation") if isinstance(body, dict) else None
-            await emit("decision", "decision", {
-                "type": "decision", "node": "decision", "decision": "error",
-                "content": str(detail or exc),
-            })
-            return {"iterations": iteration, "decision": "error",
-                    "response": _fallback_response(user_message, history)}
+            await emit(
+                "decision",
+                "decision",
+                {
+                    "type": "decision",
+                    "node": "decision",
+                    "decision": "error",
+                    "content": str(detail or exc),
+                },
+            )
+            return {"iterations": iteration, "decision": "error", "response": _fallback_response(user_message, history)}
         return {"messages": [response], "iterations": iteration}
 
     async def tools(state: AgentState) -> dict:
@@ -382,10 +401,17 @@ def build_graph(model: BaseChatModel, *, session_id: str, user_message: str,
             name = call["name"]
             # The session is never taken from model output.
             args = {k: v for k, v in call["args"].items() if k != "session_id"}
-            await emit("tools", "tool_call", {
-                "type": "tool_call", "node": "tools", "tool": name, "args": args,
-                "content": f"Calling tool: {name}({json.dumps(args, default=str)})",
-            })
+            await emit(
+                "tools",
+                "tool_call",
+                {
+                    "type": "tool_call",
+                    "node": "tools",
+                    "tool": name,
+                    "args": args,
+                    "content": f"Calling tool: {name}({json.dumps(args, default=str)})",
+                },
+            )
             if name == "process_refund_decision":
                 args["session_id"] = session_id
 
@@ -402,10 +428,17 @@ def build_graph(model: BaseChatModel, *, session_id: str, user_message: str,
                 parsed = json.loads(output)
             except (TypeError, ValueError):
                 parsed = str(output)
-            await emit("tools", "tool_result", {
-                "type": "tool_result", "node": "tools", "tool": name, "result": parsed,
-                "content": f"Tool {name} returned: {json.dumps(parsed, default=str)[:300]}",
-            })
+            await emit(
+                "tools",
+                "tool_result",
+                {
+                    "type": "tool_result",
+                    "node": "tools",
+                    "tool": name,
+                    "result": parsed,
+                    "content": f"Tool {name} returned: {json.dumps(parsed, default=str)[:300]}",
+                },
+            )
             results.append(ToolMessage(content=output, tool_call_id=call["id"], name=name))
         return {"messages": results}
 
@@ -413,10 +446,16 @@ def build_graph(model: BaseChatModel, *, session_id: str, user_message: str,
         last = state["messages"][-1]
         text = last.content if isinstance(last, AIMessage) and not last.tool_calls else ""
         decision = _recorded_decision(state["messages"])
-        await emit("decision", "decision", {
-            "type": "decision", "node": "decision", "decision": decision,
-            "content": f"Final decision: {decision.upper()}. Composing customer response.",
-        })
+        await emit(
+            "decision",
+            "decision",
+            {
+                "type": "decision",
+                "node": "decision",
+                "decision": decision,
+                "content": f"Final decision: {decision.upper()}. Composing customer response.",
+            },
+        )
         return {"response": text or GAVE_UP_RESPONSE, "decision": decision}
 
     graph = StateGraph(AgentState)
@@ -454,14 +493,16 @@ async def run_agent(
     Run the refund agent for one turn and return the reply text.
     Log events go to log_queue as they happen; None marks the end of the turn.
     """
+
     async def emit(node: str, event_type: str, payload: dict) -> None:
         payload = {**payload, "timestamp": _now_iso()}
         await log_queue.put(payload)
         await _save_log(session_id, node, event_type, payload)
 
     try:
-        graph = build_graph(model or get_chat_model(), session_id=session_id,
-                            user_message=user_message, history=history, emit=emit)
+        graph = build_graph(
+            model or get_chat_model(), session_id=session_id, user_message=user_message, history=history, emit=emit
+        )
         final = await graph.ainvoke(
             {"messages": _initial_messages(user_message, history), "iterations": 0},
             config={"recursion_limit": 2 * MAX_ITERATIONS + 5},

@@ -1,4 +1,5 @@
 """Seed the database from data/crm_data.json"""
+
 import asyncio
 import json
 from datetime import date, timedelta
@@ -35,43 +36,49 @@ async def seed(today: date | None = None) -> int:
         if settings.rebase_demo_dates:
             offset = (today or date.today()) - DATA_AS_OF
 
-        with open(settings.data_dir / "crm_data.json") as f:
-            crm_data = json.load(f)
+        crm_text = await asyncio.to_thread((settings.data_dir / "crm_data.json").read_text)
+        crm_data = json.loads(crm_text)
 
         for profile in crm_data:
-            session.add(Customer(
-                customer_id=profile["customer_id"],
-                name=profile["name"],
-                email=profile["email"].lower(),
-                phone=profile["phone"],
-                loyalty_tier=profile["loyalty_tier"],
-                account_created=_shift(profile["account_created"], offset),
-                total_orders=profile["total_orders"],
-                total_spent=profile["total_spent"],
-                fraud_flag=profile["fraud_flag"],
-                address=profile["address"],
-            ))
+            session.add(
+                Customer(
+                    customer_id=profile["customer_id"],
+                    name=profile["name"],
+                    email=profile["email"].lower(),
+                    phone=profile["phone"],
+                    loyalty_tier=profile["loyalty_tier"],
+                    account_created=_shift(profile["account_created"], offset),
+                    total_orders=profile["total_orders"],
+                    total_spent=profile["total_spent"],
+                    fraud_flag=profile["fraud_flag"],
+                    address=profile["address"],
+                )
+            )
             for order in profile.get("orders", []):
-                session.add(Order(
-                    order_id=order["order_id"],
-                    customer_id=profile["customer_id"],
-                    date=_shift(order["date"], offset),
-                    delivered_date=_shift(order.get("delivered_date"), offset),
-                    status=order["status"],
-                    total=order["total"],
-                    shipping=order["shipping"],
-                    is_international=order["is_international"],
-                    items=order["items"],
-                ))
+                session.add(
+                    Order(
+                        order_id=order["order_id"],
+                        customer_id=profile["customer_id"],
+                        date=_shift(order["date"], offset),
+                        delivered_date=_shift(order.get("delivered_date"), offset),
+                        status=order["status"],
+                        total=order["total"],
+                        shipping=order["shipping"],
+                        is_international=order["is_international"],
+                        items=order["items"],
+                    )
+                )
             for refund in profile.get("refund_history", []):
-                session.add(RefundHistory(
-                    customer_id=profile["customer_id"],
-                    order_id=refund["order_id"],
-                    date=_shift(refund["date"], offset),
-                    reason=refund["reason"],
-                    amount=refund["amount"],
-                    status=refund["status"],
-                ))
+                session.add(
+                    RefundHistory(
+                        customer_id=profile["customer_id"],
+                        order_id=refund["order_id"],
+                        date=_shift(refund["date"], offset),
+                        reason=refund["reason"],
+                        amount=refund["amount"],
+                        status=refund["status"],
+                    )
+                )
 
         await session.commit()
 

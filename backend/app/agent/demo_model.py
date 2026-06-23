@@ -5,6 +5,7 @@ It walks the same tool workflow the system prompt asks of the real model:
 order lookup, eligibility check, decision, reply. That lets the app,
 screenshots and README examples run with no API key and no network.
 """
+
 import json
 import re
 import uuid
@@ -23,8 +24,7 @@ REASON_KEYWORDS = (
     ("NOT_AS_DESCRIBED", ("not as described", "doesn't match", "looks different")),
     ("MISSING_PARTS", ("missing",)),
     ("SUBSCRIPTION_CANCEL", ("subscription",)),
-    ("CHANGE_OF_MIND", ("changed my mind", "change of mind", "don't want", "no longer", "don't need",
-                        "return")),
+    ("CHANGE_OF_MIND", ("changed my mind", "change of mind", "don't want", "no longer", "don't need", "return")),
 )
 
 
@@ -55,10 +55,7 @@ def _reply(result: dict[str, Any], order: dict[str, Any]) -> str:
             f"**{result.get('escalation_ticket', '')}**. {result['message'].split('Reason: ', 1)[-1]} "
             "You'll hear back within one business day."
         )
-    return (
-        f"I'm sorry, I can't refund {order['order_id']}. "
-        f"{result['message'].split('Reason: ', 1)[-1]}"
-    )
+    return f"I'm sorry, I can't refund {order['order_id']}. {result['message'].split('Reason: ', 1)[-1]}"
 
 
 class DemoChatModel(BaseChatModel):
@@ -69,15 +66,16 @@ class DemoChatModel(BaseChatModel):
     def bind_tools(self, tools: Any, **kwargs: Any) -> "DemoChatModel":
         return self
 
-    def _generate(self, messages: list[BaseMessage], stop: Any = None, run_manager: Any = None,
-                  **kwargs: Any) -> ChatResult:
+    def _generate(
+        self, messages: list[BaseMessage], stop: Any = None, run_manager: Any = None, **kwargs: Any
+    ) -> ChatResult:
         return ChatResult(generations=[ChatGeneration(message=self._next(messages))])
 
     def _next(self, messages: list[BaseMessage]) -> AIMessage:
         human = [m.content for m in messages if isinstance(m, HumanMessage) and isinstance(m.content, str)]
         last_human = max(i for i, m in enumerate(messages) if isinstance(m, HumanMessage))
         results: dict[str, dict] = {}
-        for m in messages[last_human + 1:]:
+        for m in messages[last_human + 1 :]:
             if isinstance(m, ToolMessage):
                 results[m.name or ""] = json.loads(m.content)
 
@@ -99,21 +97,29 @@ class DemoChatModel(BaseChatModel):
 
         eligibility = results.get("check_refund_eligibility")
         if eligibility is None:
-            return _tool_call("check_refund_eligibility", {
-                "order_id": order_id, "customer_id": order["customer_id"], "reason_code": reason,
-            })
+            return _tool_call(
+                "check_refund_eligibility",
+                {
+                    "order_id": order_id,
+                    "customer_id": order["customer_id"],
+                    "reason_code": reason,
+                },
+            )
 
         decision = results.get("process_refund_decision")
         if decision is None:
             explanation = next(
                 (eligibility[k] for k in ("reason", "denial_reason", "escalation_reason") if k in eligibility), ""
             )
-            return _tool_call("process_refund_decision", {
-                "order_id": order_id,
-                "customer_id": order["customer_id"],
-                "decision": eligibility["decision_type"],
-                "reason_code": reason,
-                "reason": explanation,
-            })
+            return _tool_call(
+                "process_refund_decision",
+                {
+                    "order_id": order_id,
+                    "customer_id": order["customer_id"],
+                    "decision": eligibility["decision_type"],
+                    "reason_code": reason,
+                    "reason": explanation,
+                },
+            )
 
         return AIMessage(content=_reply(decision, order))

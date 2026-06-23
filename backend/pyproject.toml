@@ -1,0 +1,25 @@
+[project]
+name = "shopwave-agent-api"
+version = "0.2.0"
+requires-python = ">=3.12,<3.13"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC"]
+# FastAPI declares dependencies as call defaults by design.
+ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+# The system prompt reads better as one instruction per line.
+"app/agent/prompts.py" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
