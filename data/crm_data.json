@@ -1,0 +1,394 @@
+[
+  {
+    "customer_id": "CUST-001",
+    "name": "Sarah Mitchell",
+    "email": "sarah.mitchell@email.com",
+    "phone": "+1-555-0101",
+    "loyalty_tier": "Platinum",
+    "account_created": "2019-03-15",
+    "total_orders": 52,
+    "total_spent": 3890.5,
+    "fraud_flag": false,
+    "refund_history": [],
+    "address": {"street": "42 Maple Drive", "city": "Austin", "state": "TX", "zip": "78701", "country": "US"},
+    "orders": [
+      {
+        "order_id": "ORD-10021",
+        "date": "2026-01-10",
+        "delivered_date": "2026-01-14",
+        "status": "delivered",
+        "items": [{"sku": "ELEC-4421", "name": "Wireless Noise-Cancelling Headphones", "category": "Electronics", "quantity": 1, "unit_price": 249.99, "is_final_sale": false, "is_digital": false}],
+        "total": 249.99,
+        "shipping": "standard",
+        "is_international": false
+      }
+    ]
+  },
+  {
+    "customer_id": "CUST-002",
+    "name": "James Thornton",
+    "email": "j.thornton@gmail.com",
+    "phone": "+1-555-0102",
+    "loyalty_tier": "None",
+    "account_created": "2023-11-01",
+    "total_orders": 6,
+    "total_spent": 347.43,
+    "fraud_flag": false,
+    "refund_history": [
+      {"order_id": "ORD-09812", "date": "2026-03-18", "reason": "CHANGE_OF_MIND", "amount": 45.0, "status": "approved"},
+      {"order_id": "ORD-09933", "date": "2026-04-09", "reason": "DEFECTIVE", "amount": 89.99, "status": "approved"},
+      {"order_id": "ORD-09991", "date": "2026-05-02", "reason": "CHANGE_OF_MIND", "amount": 32.5, "status": "approved"}
+    ],
+    "address": {"street": "8 Pine Street", "city": "Denver", "state": "CO", "zip": "80203", "country": "US"},
+    "orders": [
+      {
+        "order_id": "ORD-10045",
+        "date": "2026-06-12",
+        "delivered_date": "2026-06-15",
+        "status": "delivered",
+        "items": [{"sku": "CLTH-2210", "name": "Premium Cotton Hoodie", "category": "Clothing", "quantity": 1, "unit_price": 79.99, "is_final_sale": false, "is_digital": false}],
+        "total": 79.99,
+        "shipping": "standard",
+        "is_international": false
+      }
+    ]
+  },
+  {
+    "customer_id": "CUST-003",
+    "name": "Priya Nair",
+    "email": "priya.nair@outlook.com",
+    "phone": "+1-555-0103",
+    "loyalty_tier": "Gold",
+    "account_created": "2020-07-22",
+    "total_orders": 31,
+    "total_spent": 2180.0,
+    "fraud_flag": false,
+    "refund_history": [],
+    "address": {"street": "300 Elm Avenue", "city": "Seattle", "state": "WA", "zip": "98101", "country": "US"},
+    "orders": [
+      {
+        "order_id": "ORD-10033",
+        "date": "2026-05-04",
+        "delivered_date": "2026-05-07",
+        "status": "delivered",
+        "items": [{"sku": "HOME-8821", "name": "Smart Air Purifier", "category": "Home Appliances", "quantity": 1, "unit_price": 189.99, "is_final_sale": false, "is_digital": false}],
+        "total": 189.99,
+        "shipping": "express",
+        "is_international": false
+      }
+    ]
+  },
+  {
+    "customer_id": "CUST-004",
+    "name": "Marcus Webb",
+    "email": "marcus.webb@yahoo.com",
+    "phone": "+1-555-0104",
+    "loyalty_tier": "None",
+    "account_created": "2024-01-15",
+    "total_orders": 4,
+    "total_spent": 864.95,
+    "fraud_flag": false,
+    "refund_history": [],
+    "address": {"street": "17 Sunset Blvd", "city": "Los Angeles", "state": "CA", "zip": "90028", "country": "US"},
+    "orders": [
+      {
+        "order_id": "ORD-10067",
+        "date": "2026-06-13",
+        "delivered_date": "2026-06-15",
+        "status": "delivered",
+        "items": [
+          {"sku": "ELEC-5502", "name": "4K Webcam Pro", "category": "Electronics", "quantity": 1, "unit_price": 159.99, "is_final_sale": false, "is_digital": false},
+          {"sku": "ELEC-5510", "name": "USB-C Hub 7-in-1", "category": "Electronics", "quantity": 1, "unit_price": 49.99, "is_final_sale": false, "is_digital": false}
+        ],
+        "total": 209.98,
+        "shipping": "standard",
+        "is_international": false
+      }
+    ]
+  },
+  {
+    "customer_id": "CUST-005",
+    "name": "Elena Vasquez",
+    "email": "elena.v@protonmail.com",
+    "phone": "+1-555-0105",
+    "loyalty_tier": "None",
+    "account_created": "2022-09-30",
+    "total_orders": 11,
+    "total_spent": 561.79,
+    "fraud_flag": true,
+    "refund_history": [
+      {"order_id": "ORD-08741", "date": "2026-01-22", "reason": "CHANGE_OF_MIND", "amount": 120.0, "status": "approved"},
+      {"order_id": "ORD-09100", "date": "2026-03-07", "reason": "DEFECTIVE", "amount": 85.0, "status": "approved"}
+    ],
+    "address": {"street": "55 Oak Lane", "city": "Chicago", "state": "IL", "zip": "60601", "country": "US"},
+    "orders": [
+      {
+        "order_id": "ORD-10058",
+        "date": "2026-06-10",
+        "delivered_date": "2026-06-13",
+        "status": "delivered",
+        "items": [{"sku": "CLTH-3301", "name": "Designer Silk Blouse", "category": "Clothing", "quantity": 1, "unit_price": 139.99, "is_final_sale": false, "is_digital": false}],
+        "total": 139.99,
+        "shipping": "express",
+        "is_international": false
+      }
+    ]
+  },
+  {
+    "customer_id": "CUST-006",
+    "name": "Tom Beaumont",
+    "email": "tom.beaumont@corp.com",
+    "phone": "+1-555-0106",
+    "loyalty_tier": "None",
+    "account_created": "2021-05-18",
+    "total_orders": 14,
+    "total_spent": 1580.24,
+    "fraud_flag": false,
+    "refund_history": [],
+    "address": {"street": "200 Business Park Rd", "city": "New York", "state": "NY", "zip": "10001", "country": "US"},
+    "orders": [
+      {
+        "order_id": "ORD-10072",
+        "date": "2026-06-16",
+        "delivered_date": "2026-06-16",
+        "status": "delivered",
+        "items": [{"sku": "SOFT-1100", "name": "Adobe Creative Suite Annual License", "category": "Digital Software", "quantity": 1, "unit_price": 599.99, "is_final_sale": false, "is_digital": true}],
+        "total": 599.99,
+        "shipping": "digital_delivery",
+        "is_international": false
+      }
+    ]
+  },
+  {
+    "customer_id": "CUST-007",
+    "name": "Aisha Okafor",
+    "email": "aisha.okafor@gmail.com",
+    "phone": "+1-555-0107",
+    "loyalty_tier": "Silver",
+    "account_created": "2020-02-14",
+    "total_orders": 22,
+    "total_spent": 1340.5,
+    "fraud_flag": false,
+    "refund_history": [],
+    "address": {"street": "78 Harbor View", "city": "Boston", "state": "MA", "zip": "02101", "country": "US"},
+    "orders": [
+      {
+        "order_id": "ORD-10015",
+        "date": "2026-06-14",
+        "delivered_date": "2026-06-16",
+        "status": "delivered",
+        "items": [{"sku": "ELEC-7700", "name": "Ergonomic Mechanical Keyboard", "category": "Electronics", "quantity": 1, "unit_price": 89.99, "is_final_sale": false, "is_digital": false}],
+        "total": 89.99,
+        "shipping": "standard",
+        "is_international": false
+      }
+    ]
+  },
+  {
+    "customer_id": "CUST-008",
+    "name": "Diego Fernandez",
+    "email": "diego.f@hotmail.com",
+    "phone": "+52-555-0108",
+    "loyalty_tier": "None",
+    "account_created": "2023-06-01",
+    "total_orders": 5,
+    "total_spent": 433.39,
+    "fraud_flag": false,
+    "refund_history": [],
+    "address": {"street": "Av. Reforma 450", "city": "Mexico City", "state": "CDMX", "zip": "06600", "country": "MX"},
+    "orders": [
+      {
+        "order_id": "ORD-10039",
+        "date": "2026-06-07",
+        "delivered_date": "2026-06-11",
+        "status": "delivered",
+        "items": [{"sku": "SPRT-4422", "name": "Trail Running Shoes", "category": "Sports", "quantity": 1, "unit_price": 134.99, "is_final_sale": false, "is_digital": false}],
+        "total": 134.99,
+        "shipping": "international_standard",
+        "is_international": true
+      }
+    ]
+  },
+  {
+    "customer_id": "CUST-009",
+    "name": "Rachel Kim",
+    "email": "rkim@university.edu",
+    "phone": "+1-555-0109",
+    "loyalty_tier": "None",
+    "account_created": "2024-08-20",
+    "total_orders": 2,
+    "total_spent": 99.98,
+    "fraud_flag": false,
+    "refund_history": [],
+    "address": {"street": "1 College Ave", "city": "Ann Arbor", "state": "MI", "zip": "48104", "country": "US"},
+    "orders": [
+      {
+        "order_id": "ORD-10088",
+        "date": "2026-06-17",
+        "delivered_date": "2026-06-18",
+        "status": "delivered",
+        "items": [{"sku": "CLTH-9910", "name": "Yoga Mat (Final Sale)", "category": "Sports", "quantity": 1, "unit_price": 49.99, "is_final_sale": true, "is_digital": false}],
+        "total": 49.99,
+        "shipping": "standard",
+        "is_international": false
+      }
+    ]
+  },
+  {
+    "customer_id": "CUST-010",
+    "name": "Henry Obrien",
+    "email": "henry.obrien@icloud.com",
+    "phone": "+1-555-0110",
+    "loyalty_tier": "None",
+    "account_created": "2022-12-05",
+    "total_orders": 9,
+    "total_spent": 897.79,
+    "fraud_flag": false,
+    "refund_history": [],
+    "address": {"street": "33 Clover Street", "city": "Portland", "state": "OR", "zip": "97201", "country": "US"},
+    "orders": [
+      {
+        "order_id": "ORD-10052",
+        "date": "2026-06-11",
+        "delivered_date": "2026-06-14",
+        "status": "delivered",
+        "items": [{"sku": "HOME-3300", "name": "Espresso Machine Deluxe", "category": "Kitchen", "quantity": 1, "unit_price": 329.99, "is_final_sale": false, "is_digital": false}],
+        "total": 329.99,
+        "shipping": "standard",
+        "is_international": false
+      }
+    ]
+  },
+  {
+    "customer_id": "CUST-011",
+    "name": "Zoe Thompson",
+    "email": "zoe.t@designstudio.com",
+    "phone": "+1-555-0111",
+    "loyalty_tier": "Platinum",
+    "account_created": "2018-11-03",
+    "total_orders": 67,
+    "total_spent": 6940.0,
+    "fraud_flag": false,
+    "refund_history": [],
+    "address": {"street": "100 Creative Blvd", "city": "San Francisco", "state": "CA", "zip": "94103", "country": "US"},
+    "orders": [
+      {
+        "order_id": "ORD-09980",
+        "date": "2026-04-20",
+        "delivered_date": "2026-04-23",
+        "status": "delivered",
+        "items": [{"sku": "ELEC-9901", "name": "iPad Pro 13-inch M4", "category": "Electronics", "quantity": 1, "unit_price": 1099.99, "is_final_sale": false, "is_digital": false}],
+        "total": 1099.99,
+        "shipping": "express",
+        "is_international": false
+      }
+    ]
+  },
+  {
+    "customer_id": "CUST-012",
+    "name": "Leo Martins",
+    "email": "leo.martins@email.br",
+    "phone": "+55-11-0112",
+    "loyalty_tier": "None",
+    "account_created": "2024-03-10",
+    "total_orders": 3,
+    "total_spent": 299.97,
+    "fraud_flag": false,
+    "refund_history": [],
+    "address": {"street": "Rua Augusta 2000", "city": "Sao Paulo", "state": "SP", "zip": "01305-100", "country": "BR"},
+    "orders": [
+      {
+        "order_id": "ORD-10061",
+        "date": "2026-06-10",
+        "delivered_date": "2026-06-15",
+        "status": "delivered",
+        "items": [{"sku": "SPRT-2201", "name": "Smart Fitness Tracker", "category": "Electronics", "quantity": 1, "unit_price": 99.99, "is_final_sale": false, "is_digital": false}],
+        "total": 99.99,
+        "shipping": "international_standard",
+        "is_international": true
+      }
+    ]
+  },
+  {
+    "customer_id": "CUST-013",
+    "name": "Nadia Petrov",
+    "email": "nadia.petrov@mail.ru",
+    "phone": "+7-495-0113",
+    "loyalty_tier": "Gold",
+    "account_created": "2021-01-20",
+    "total_orders": 24,
+    "total_spent": 2549.75,
+    "fraud_flag": false,
+    "refund_history": [
+      {"order_id": "ORD-09501", "date": "2026-02-14", "reason": "DEFECTIVE", "amount": 199.0, "status": "approved"}
+    ],
+    "address": {"street": "Tverskaya 15", "city": "Moscow", "state": "Moscow Oblast", "zip": "125009", "country": "RU"},
+    "orders": [
+      {
+        "order_id": "ORD-10044",
+        "date": "2026-06-08",
+        "delivered_date": "2026-06-13",
+        "status": "delivered",
+        "items": [{"sku": "FURN-8801", "name": "Luxury Standing Desk", "category": "Furniture", "quantity": 1, "unit_price": 549.0, "is_final_sale": false, "is_digital": false}],
+        "total": 549.0,
+        "shipping": "international_freight",
+        "is_international": true
+      }
+    ]
+  },
+  {
+    "customer_id": "CUST-014",
+    "name": "Omar Hassan",
+    "email": "omar.hassan@startup.io",
+    "phone": "+1-555-0114",
+    "loyalty_tier": "None",
+    "account_created": "2023-09-12",
+    "total_orders": 7,
+    "total_spent": 534.97,
+    "fraud_flag": false,
+    "refund_history": [],
+    "address": {"street": "500 Innovation Way", "city": "Miami", "state": "FL", "zip": "33101", "country": "US"},
+    "orders": [
+      {
+        "order_id": "ORD-10079",
+        "date": "2026-06-13",
+        "delivered_date": "2026-06-16",
+        "status": "delivered",
+        "items": [
+          {"sku": "ELEC-4400", "name": "Wireless Charging Pad Bundle", "category": "Electronics", "quantity": 2, "unit_price": 34.99, "is_final_sale": false, "is_digital": false},
+          {"sku": "ELEC-4401", "name": "Phone Case Premium", "category": "Electronics", "quantity": 1, "unit_price": 24.99, "is_final_sale": false, "is_digital": false}
+        ],
+        "total": 94.97,
+        "shipping": "standard",
+        "is_international": false
+      }
+    ]
+  },
+  {
+    "customer_id": "CUST-015",
+    "name": "Clara Fontaine",
+    "email": "clara.fontaine@gmail.com",
+    "phone": "+1-555-0115",
+    "loyalty_tier": "Silver",
+    "account_created": "2022-04-01",
+    "total_orders": 16,
+    "total_spent": 1018.3,
+    "fraud_flag": false,
+    "refund_history": [
+      {"order_id": "ORD-09700", "date": "2026-03-20", "reason": "WRONG_ITEM", "amount": 55.0, "status": "approved"}
+    ],
+    "address": {"street": "22 Lavender Lane", "city": "Nashville", "state": "TN", "zip": "37201", "country": "US"},
+    "orders": [
+      {
+        "order_id": "ORD-10083",
+        "date": "2026-06-16",
+        "delivered_date": "2026-06-17",
+        "status": "delivered",
+        "items": [{"sku": "BEAU-1102", "name": "Vitamin C Serum 30ml", "category": "Beauty", "quantity": 1, "unit_price": 42.0, "is_final_sale": false, "is_digital": false}],
+        "total": 42.0,
+        "shipping": "standard",
+        "is_international": false
+      }
+    ]
+  }
+]
