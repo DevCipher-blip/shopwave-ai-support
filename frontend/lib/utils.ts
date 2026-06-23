@@ -21,3 +21,11 @@ export function formatDate(iso: string | null): string {
     minute: "2-digit",
   });
 }
+
+let idCounter = 0;
+
+/** Client-side list key. crypto.randomUUID only exists in secure contexts (HTTPS or localhost). */
+export function newId(prefix = "id"): string {
+  idCounter += 1;
+  return `${prefix}-${Date.now().toString(36)}-${idCounter}`;
+}

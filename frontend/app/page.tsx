@@ -14,7 +14,7 @@ import {
   type AgentLog,
   type ChatMessage,
 } from "@/lib/api";
-import { cn, formatDate } from "@/lib/utils";
+import { cn, formatDate, newId } from "@/lib/utils";
 import { ReasoningPanel } from "@/components/ReasoningPanel";
 import { VoiceInput } from "@/components/VoiceInput";
 
@@ -98,9 +98,10 @@ export default function ChatPage() {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
 
+  const activeServerMessages = activeSession?.messages;
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [activeMessages]);
+  }, [activeServerMessages]);
 
   const updateSession = useCallback((sessionId: string, updater: (session: SessionRecord) => SessionRecord) => {
     setSessions((prev) => prev.map((session) => session.id === sessionId ? updater(session) : session));
@@ -220,20 +221,17 @@ export default function ChatPage() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
   }, [sessions]);
 
-  useEffect(() => {
-    if (!activeSessionId) return;
-    const selectedSession = sessions.find((session) => session.id === activeSessionId);
-    if (!selectedSession || selectedSession.messages !== null) return;
-    loadSessionMessages(activeSessionId).catch(() => {
-      setSessions((prev) => prev.filter((session) => session.id !== activeSessionId));
-      if (activeSessionIdRef.current === activeSessionId) {
-        setActiveSessionId((prev) => {
-          const next = sessions.find((session) => session.id !== activeSessionId)?.id ?? null;
-          return next !== activeSessionId ? next : null;
-        });
-      }
+  const selectSession = (sessionId: string) => {
+    setActiveSessionId(sessionId);
+    const selected = sessions.find((session) => session.id === sessionId);
+    if (!selected || selected.messages !== null) return;
+    // Restored sessions whose messages failed to load during bootstrap.
+    loadSessionMessages(sessionId).catch(() => {
+      const remaining = sessions.filter((session) => session.id !== sessionId);
+      setSessions(remaining);
+      if (activeSessionIdRef.current === sessionId) setActiveSessionId(remaining[0]?.id ?? null);
     });
-  }, [activeSessionId, sessions, loadSessionMessages, updateSession]);
+  };
 
   const speak = useCallback((text: string) => {
     if (!ttsEnabled || typeof window === "undefined") return;
@@ -256,14 +254,14 @@ export default function ChatPage() {
     if (!trimmed || targetSession?.isLoading) return;
 
     const userMsg: Message = {
-      id: crypto.randomUUID(),
+      id: newId("user"),
       role: "user",
       content: trimmed,
       timestamp: new Date(),
     };
     setInput("");
 
-    const assistantId = crypto.randomUUID();
+    const assistantId = newId("assistant");
     updateSession(sessionId, (session) => ({
       ...session,
       title: session.title === DEFAULT_SESSION_TITLE ? deriveSessionTitle(trimmed) : session.title,
@@ -403,7 +401,7 @@ export default function ChatPage() {
               return (
                 <button
                   key={session.id}
-                  onClick={() => setActiveSessionId(session.id)}
+                  onClick={() => selectSession(session.id)}
                   className={cn(
                     "w-full text-left rounded-xl px-3 py-2.5 transition-colors border",
                     isActive

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef, useSyncExternalStore } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, RefreshCw, CheckCircle, XCircle, AlertTriangle,
@@ -106,7 +106,37 @@ function SessionRow({ session }: { session: SessionSummary }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+interface Dashboard {
+  stats: AdminStats;
+  sessions: SessionSummary[];
+}
+
+async function loadDashboard(token: string): Promise<Dashboard> {
+  const [stats, sessions] = await Promise.all([fetchStats(token), fetchSessions(token, 30)]);
+  return { stats, sessions };
+}
+
 const TOKEN_KEY = "shopwave-admin-token";
+const TOKEN_EVENT = "shopwave-admin-token-change";
+
+function subscribeToken(onChange: () => void) {
+  window.addEventListener(TOKEN_EVENT, onChange);
+  return () => window.removeEventListener(TOKEN_EVENT, onChange);
+}
+
+function storeToken(token: string | null) {
+  if (token) window.sessionStorage.setItem(TOKEN_KEY, token);
+  else window.sessionStorage.removeItem(TOKEN_KEY);
+  window.dispatchEvent(new Event(TOKEN_EVENT));
+}
+
+function useAdminToken(): string | null {
+  return useSyncExternalStore(
+    subscribeToken,
+    () => window.sessionStorage.getItem(TOKEN_KEY),
+    () => null,
+  );
+}
 
 function TokenForm({ error, onSubmit }: { error: string | null; onSubmit: (token: string) => void }) {
   const [value, setValue] = useState("");
@@ -137,7 +167,7 @@ function TokenForm({ error, onSubmit }: { error: string | null; onSubmit: (token
 }
 
 export default function AdminPage() {
-  const [token, setToken] = useState<string | null>(null);
+  const token = useAdminToken();
   const [authError, setAuthError] = useState<string | null>(null);
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -147,39 +177,42 @@ export default function AdminPage() {
   const logScrollRef = useRef<HTMLDivElement>(null);
 
   const signOut = useCallback((message: string | null) => {
-    window.sessionStorage.removeItem(TOKEN_KEY);
-    setToken(null);
     setAuthError(message);
+    storeToken(null);
   }, []);
 
-  const loadData = useCallback(async () => {
+  const applyDashboard = useCallback((data: Dashboard) => {
+    setStats(data.stats);
+    setSessions(data.sessions);
+  }, []);
+
+  const handleLoadError = useCallback((err: unknown) => {
+    if (err instanceof ApiError && err.status === 401) signOut("That token was rejected.");
+    else if (err instanceof ApiError && err.status === 503) signOut("Admin access is disabled on the server (ADMIN_TOKEN not set).");
+  }, [signOut]);
+
+  const refresh = () => {
     if (!token) return;
     setLoading(true);
-    try {
-      const [s, sess] = await Promise.all([fetchStats(token), fetchSessions(token, 30)]);
-      setStats(s);
-      setSessions(sess);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) signOut("That token was rejected.");
-      else if (err instanceof ApiError && err.status === 503) signOut("Admin access is disabled on the server (ADMIN_TOKEN not set).");
-    } finally {
-      setLoading(false);
-    }
-  }, [token, signOut]);
-
-  useEffect(() => {
-    setToken(window.sessionStorage.getItem(TOKEN_KEY));
-  }, []);
+    loadDashboard(token).then(applyDashboard, handleLoadError).finally(() => setLoading(false));
+  };
 
   useEffect(() => {
     if (!token) return;
-    loadData();
-    return subscribeAdminStream(
+    let cancelled = false;
+    loadDashboard(token)
+      .then((data) => { if (!cancelled) applyDashboard(data); }, handleLoadError)
+      .finally(() => { if (!cancelled) setLoading(false); });
+    const close = subscribeAdminStream(
       token,
       (log) => setLiveLogs((prev) => [...prev.slice(-199), log]),
       () => undefined,
     );
-  }, [token, loadData]);
+    return () => {
+      cancelled = true;
+      close();
+    };
+  }, [token, applyDashboard, handleLoadError]);
 
   useEffect(() => {
     if (autoScroll && logScrollRef.current) {
@@ -192,9 +225,8 @@ export default function AdminPage() {
       <TokenForm
         error={authError}
         onSubmit={(value) => {
-          window.sessionStorage.setItem(TOKEN_KEY, value);
           setAuthError(null);
-          setToken(value);
+          storeToken(value);
         }}
       />
     );
@@ -223,7 +255,7 @@ export default function AdminPage() {
             <span className="text-xs text-emerald-700 font-medium">Live</span>
           </div>
           <button
-            onClick={loadData}
+            onClick={refresh}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white border border-slate-200 hover:bg-slate-50 rounded-lg text-slate-600 font-medium transition-colors"
           >
             <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />

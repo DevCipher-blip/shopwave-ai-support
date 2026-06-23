@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
-import { Mic, MicOff, Loader2, Radio } from "lucide-react";
+import { Mic, MicOff, Loader2 } from "lucide-react";
 import { transcribeAudio } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -42,7 +42,7 @@ export function VoiceInput({ onTranscript, disabled }: Props) {
           } else {
             setError("No speech detected");
           }
-        } catch (err) {
+        } catch {
           setError("Transcription failed. Check your microphone.");
         } finally {
           setState("idle");
@@ -51,7 +51,7 @@ export function VoiceInput({ onTranscript, disabled }: Props) {
       mediaRecorder.start();
       mediaRecorderRef.current = mediaRecorder;
       setState("recording");
-    } catch (err) {
+    } catch {
       setError("Microphone access denied");
       setState("idle");
     }
