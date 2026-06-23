@@ -9,6 +9,8 @@ PLACEHOLDER_KEYS = {"", "your_groq_api_key_here"}
 
 class Settings(BaseSettings):
     groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
+    llm_provider: Literal["groq", "fake"] = "groq"
     stt_provider: Literal["groq", "fake"] = "groq"
     admin_token: str = ""
     database_url: str = "sqlite+aiosqlite:///./shopwave.db"
@@ -37,8 +39,9 @@ class Settings(BaseSettings):
     def has_groq_key(self) -> bool:
         return self.groq_api_key.strip() not in PLACEHOLDER_KEYS
 
-    def check(self, needs_groq: bool) -> None:
+    def check(self) -> None:
         """Fail at startup rather than on the first customer request."""
+        needs_groq = "groq" in (self.llm_provider, self.stt_provider)
         if needs_groq and not self.has_groq_key:
             raise RuntimeError("GROQ_API_KEY must be set (or use the fake providers for a demo).")
         if self.admin_token and len(self.admin_token) < 16:

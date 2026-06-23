@@ -45,7 +45,7 @@ SAFE_FAILURE_RESPONSE = (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    settings.check(needs_groq=True)
+    settings.check()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     seeded = await seed()

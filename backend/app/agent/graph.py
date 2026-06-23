@@ -1,26 +1,36 @@
 """
-LangGraph ReAct agent for refund processing.
-Streams reasoning steps via an asyncio.Queue for SSE broadcast.
+LangGraph refund agent.
+
+    START -> triage -> (answered without the LLM) -> END
+                    -> agent <-> tools
+                       agent -> finalize -> END
+
+Each step is logged to the database and pushed onto an asyncio.Queue that
+the chat and admin SSE streams read from.
 """
 import asyncio
 import json
 import re
-import uuid
-from typing import AsyncIterator
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
-from langchain_groq import ChatGroq
-from langgraph.prebuilt import create_react_agent
-from langgraph.graph import StateGraph, END
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.graph import END, START, StateGraph
 from sqlalchemy import select
 
+from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.state import AgentState
 from app.agent.tools import ALL_TOOLS, get_order_details
-from app.agent.prompts import SYSTEM_PROMPT
 from app.config import settings
 from app.database.db import AsyncSessionLocal
-from app.database.models import ChatSession, Message, AgentLog, Customer
+from app.database.models import AgentLog, Customer
+
+MAX_ITERATIONS = 10
+TOOLS_BY_NAME = {t.name: t for t in ALL_TOOLS}
+GAVE_UP_RESPONSE = "I apologize, I was unable to process your request. Please try again or contact support."
+
+Emit = Callable[[str, str, dict], Awaitable[None]]
 
 
 ORDER_ID_RE = re.compile(r"\bORD-\d+\b", re.IGNORECASE)
@@ -86,10 +96,6 @@ def _has_hard_identifier(user_message: str, history: list[dict]) -> bool:
         if ORDER_ID_RE.search(content or "") or EMAIL_RE.search(content or ""):
             return True
     return False
-
-
-# Keep the old name for call-sites that already use it.
-_has_identifier = _has_hard_identifier
 
 
 def _is_greeting_only(user_message: str) -> bool:
@@ -279,25 +285,27 @@ async def _maybe_handle_without_llm(
 
         return _format_order_details(order)
 
-    if not _has_identifier(user_message, history):
+    if not _has_hard_identifier(user_message, history):
         return "Please share your order number or the email address on the order, and tell me what you need help with."
 
     return None
 
 
 def _fallback_response(user_message: str, history: list[dict]) -> str:
-    if not _has_identifier(user_message, history):
+    if not _has_hard_identifier(user_message, history):
         return "Please share your order number or the email address on the order, and tell me what you need help with."
     return "I hit a tool-calling issue while processing that. Please restate the request with the order number and the exact issue you want help with."
 
 
-def _build_llm() -> ChatGroq:
-    return ChatGroq(
-        api_key=settings.groq_api_key,
-        model="llama-3.3-70b-versatile",
-        temperature=0.1,
-        streaming=True,
-    )
+def get_chat_model() -> BaseChatModel:
+    if settings.llm_provider == "fake":
+        from app.agent.demo_model import DemoChatModel
+
+        return DemoChatModel()
+
+    from langchain_groq import ChatGroq
+
+    return ChatGroq(api_key=settings.groq_api_key, model=settings.groq_model, temperature=0.1)
 
 
 def _now_iso() -> str:
@@ -305,49 +313,126 @@ def _now_iso() -> str:
 
 
 async def _save_log(session_id: str, node: str, event_type: str, content: dict) -> None:
-    """Persist an agent log entry to the database."""
     async with AsyncSessionLocal() as db:
-        log = AgentLog(
-            session_id=session_id,
-            node=node,
-            event_type=event_type,
-            content=content,
-        )
-        db.add(log)
+        db.add(AgentLog(session_id=session_id, node=node, event_type=event_type, content=content))
         await db.commit()
 
 
-async def run_agent(
-    session_id: str,
-    user_message: str,
-    history: list[dict],
-    log_queue: "asyncio.Queue",
-) -> str:
-    """
-    Run the refund agent for one turn.
-    Emits structured log events to log_queue for real-time SSE streaming.
-    Returns the final assistant text response.
-    """
-    import asyncio
+def _recorded_decision(messages: list) -> str:
+    """The outcome of the last process_refund_decision call this turn, if any."""
+    decision = "pending"
+    for msg in messages:
+        if isinstance(msg, ToolMessage) and msg.name == "process_refund_decision":
+            try:
+                decision = json.loads(msg.content).get("decision", decision)
+            except (TypeError, ValueError):
+                pass
+    return decision
 
-    precomputed_response = await _maybe_handle_without_llm(session_id, user_message, history)
-    if precomputed_response:
-        decision_log = {
-            "type": "decision",
-            "node": "decision",
-            "decision": "informational",
-            "timestamp": _now_iso(),
-            "content": "Handled without refund decision."
-        }
-        await log_queue.put(decision_log)
-        await _save_log(session_id, "decision", "decision", decision_log)
-        await log_queue.put(None)
-        return precomputed_response
 
-    llm = _build_llm()
-    llm_with_tools = llm.bind_tools(ALL_TOOLS)
+def route_after_triage(state: AgentState) -> str:
+    return END if state.get("response") else "agent"
 
-    # Build message history
+
+def route_after_agent(state: AgentState) -> str:
+    if state.get("decision") == "error":
+        return END
+    last = state["messages"][-1]
+    if isinstance(last, AIMessage) and last.tool_calls and state.get("iterations", 0) < MAX_ITERATIONS:
+        return "tools"
+    return "finalize"
+
+
+def build_graph(model: BaseChatModel, *, session_id: str, user_message: str,
+                history: list[dict], emit: Emit):
+    llm = model.bind_tools(ALL_TOOLS)
+
+    async def triage(state: AgentState) -> dict:
+        text = await _maybe_handle_without_llm(session_id, user_message, history)
+        if not text:
+            return {}
+        await emit("decision", "decision", {
+            "type": "decision", "node": "decision", "decision": "informational",
+            "content": "Handled without refund decision.",
+        })
+        return {"response": text, "decision": "informational"}
+
+    async def agent(state: AgentState) -> dict:
+        iteration = state.get("iterations", 0) + 1
+        await emit("agent", "reasoning", {
+            "type": "reasoning", "node": "agent", "iteration": iteration,
+            "content": f"Iteration {iteration}: Calling LLM to decide next action...",
+        })
+        try:
+            response = await llm.ainvoke(state["messages"])
+        except Exception as exc:  # provider/network errors end the turn with a safe reply
+            body = getattr(exc, "body", None) or {}
+            detail = body.get("failed_generation") if isinstance(body, dict) else None
+            await emit("decision", "decision", {
+                "type": "decision", "node": "decision", "decision": "error",
+                "content": str(detail or exc),
+            })
+            return {"iterations": iteration, "decision": "error",
+                    "response": _fallback_response(user_message, history)}
+        return {"messages": [response], "iterations": iteration}
+
+    async def tools(state: AgentState) -> dict:
+        results = []
+        for call in state["messages"][-1].tool_calls:
+            name = call["name"]
+            # The session is never taken from model output.
+            args = {k: v for k, v in call["args"].items() if k != "session_id"}
+            await emit("tools", "tool_call", {
+                "type": "tool_call", "node": "tools", "tool": name, "args": args,
+                "content": f"Calling tool: {name}({json.dumps(args, default=str)})",
+            })
+            if name == "process_refund_decision":
+                args["session_id"] = session_id
+
+            tool = TOOLS_BY_NAME.get(name)
+            if tool is None:
+                output = json.dumps({"error": f"Unknown tool: {name}"})
+            else:
+                try:
+                    output = await tool.ainvoke(args)
+                except Exception as exc:  # bad arguments from the model go back to it as data
+                    output = json.dumps({"error": str(exc)})
+
+            try:
+                parsed = json.loads(output)
+            except (TypeError, ValueError):
+                parsed = str(output)
+            await emit("tools", "tool_result", {
+                "type": "tool_result", "node": "tools", "tool": name, "result": parsed,
+                "content": f"Tool {name} returned: {json.dumps(parsed, default=str)[:300]}",
+            })
+            results.append(ToolMessage(content=output, tool_call_id=call["id"], name=name))
+        return {"messages": results}
+
+    async def finalize(state: AgentState) -> dict:
+        last = state["messages"][-1]
+        text = last.content if isinstance(last, AIMessage) and not last.tool_calls else ""
+        decision = _recorded_decision(state["messages"])
+        await emit("decision", "decision", {
+            "type": "decision", "node": "decision", "decision": decision,
+            "content": f"Final decision: {decision.upper()}. Composing customer response.",
+        })
+        return {"response": text or GAVE_UP_RESPONSE, "decision": decision}
+
+    graph = StateGraph(AgentState)
+    graph.add_node("triage", triage)
+    graph.add_node("agent", agent)
+    graph.add_node("tools", tools)
+    graph.add_node("finalize", finalize)
+    graph.add_edge(START, "triage")
+    graph.add_conditional_edges("triage", route_after_triage, ["agent", END])
+    graph.add_conditional_edges("agent", route_after_agent, ["tools", "finalize", END])
+    graph.add_edge("tools", "agent")
+    graph.add_edge("finalize", END)
+    return graph.compile()
+
+
+def _initial_messages(user_message: str, history: list[dict]) -> list:
     messages = [SystemMessage(content=SYSTEM_PROMPT)]
     for msg in history:
         if msg["role"] == "user":
@@ -355,135 +440,32 @@ async def run_agent(
         elif msg["role"] == "assistant":
             messages.append(AIMessage(content=msg["content"]))
     messages.append(HumanMessage(content=user_message))
+    return messages
 
-    tool_map = {t.name: t for t in ALL_TOOLS}
 
-    # ── Agentic loop ────────────────────────────────────────────────────────
-    max_iterations = 10
-    iteration = 0
-    final_response = ""
+async def run_agent(
+    session_id: str,
+    user_message: str,
+    history: list[dict],
+    log_queue: asyncio.Queue,
+    model: BaseChatModel | None = None,
+) -> str:
+    """
+    Run the refund agent for one turn and return the reply text.
+    Log events go to log_queue as they happen; None marks the end of the turn.
+    """
+    async def emit(node: str, event_type: str, payload: dict) -> None:
+        payload = {**payload, "timestamp": _now_iso()}
+        await log_queue.put(payload)
+        await _save_log(session_id, node, event_type, payload)
 
-    while iteration < max_iterations:
-        iteration += 1
-
-        # Emit "thinking" log
-        thinking_log = {
-            "type": "reasoning",
-            "node": "agent",
-            "iteration": iteration,
-            "timestamp": _now_iso(),
-            "content": f"Iteration {iteration}: Calling LLM to decide next action..."
-        }
-        await log_queue.put(thinking_log)
-        await _save_log(session_id, "agent", "reasoning", thinking_log)
-
-        # Call LLM
-        try:
-            response = await llm_with_tools.ainvoke(messages)
-        except Exception as exc:
-            error_body = getattr(exc, "body", {}) or {}
-            error_log = {
-                "type": "decision",
-                "node": "decision",
-                "decision": "error",
-                "timestamp": _now_iso(),
-                "content": str(error_body.get("failed_generation") or exc),
-            }
-            await log_queue.put(error_log)
-            await _save_log(session_id, "decision", "decision", error_log)
-            await log_queue.put(None)
-            return _fallback_response(user_message, history)
-
-        # Check for tool calls
-        if hasattr(response, "tool_calls") and response.tool_calls:
-            # Add assistant message with tool calls
-            messages.append(response)
-
-            for tool_call in response.tool_calls:
-                tool_name = tool_call["name"]
-                tool_args = tool_call["args"]
-
-                # The session is never taken from model output.
-                tool_args = {k: v for k, v in tool_args.items() if k != "session_id"}
-                if tool_name == "process_refund_decision":
-                    tool_args["session_id"] = session_id
-
-                # Emit tool call log
-                tool_call_log = {
-                    "type": "tool_call",
-                    "node": "tools",
-                    "tool": tool_name,
-                    "args": tool_args,
-                    "timestamp": _now_iso(),
-                    "content": f"Calling tool: {tool_name}({json.dumps(tool_args, default=str)})"
-                }
-                await log_queue.put(tool_call_log)
-                await _save_log(session_id, "tools", "tool_call", tool_call_log)
-
-                # Execute tool
-                if tool_name in tool_map:
-                    try:
-                        tool_result = await tool_map[tool_name].ainvoke(tool_args)
-                    except Exception as e:
-                        tool_result = json.dumps({"error": str(e)})
-                else:
-                    tool_result = json.dumps({"error": f"Unknown tool: {tool_name}"})
-
-                # Emit tool result log
-                try:
-                    parsed_result = json.loads(tool_result) if isinstance(tool_result, str) else tool_result
-                except Exception:
-                    parsed_result = str(tool_result)
-
-                tool_result_log = {
-                    "type": "tool_result",
-                    "node": "tools",
-                    "tool": tool_name,
-                    "result": parsed_result,
-                    "timestamp": _now_iso(),
-                    "content": f"Tool {tool_name} returned: {json.dumps(parsed_result, default=str)[:300]}"
-                }
-                await log_queue.put(tool_result_log)
-                await _save_log(session_id, "tools", "tool_result", tool_result_log)
-
-                # Add tool result to messages
-                messages.append(ToolMessage(
-                    content=tool_result if isinstance(tool_result, str) else json.dumps(tool_result),
-                    tool_call_id=tool_call["id"],
-                ))
-
-        else:
-            # No more tool calls — this is the final response
-            final_response = response.content or ""
-
-            # Detect decision type from tool history
-            decision = "pending"
-            for msg in messages:
-                if isinstance(msg, ToolMessage):
-                    try:
-                        data = json.loads(msg.content)
-                        if "decision" in data:
-                            decision = data.get("decision", "pending")
-                    except Exception:
-                        pass
-
-            # Emit final decision log
-            decision_log = {
-                "type": "decision",
-                "node": "decision",
-                "decision": decision,
-                "timestamp": _now_iso(),
-                "content": f"Final decision: {decision.upper()}. Composing customer response."
-            }
-            await log_queue.put(decision_log)
-            await _save_log(session_id, "decision", "decision", decision_log)
-
-            # Signal end of stream
-            await log_queue.put(None)
-            break
-
-    if not final_response:
-        final_response = "I apologize, I was unable to process your request. Please try again or contact support."
+    try:
+        graph = build_graph(model or get_chat_model(), session_id=session_id,
+                            user_message=user_message, history=history, emit=emit)
+        final = await graph.ainvoke(
+            {"messages": _initial_messages(user_message, history), "iterations": 0},
+            config={"recursion_limit": 2 * MAX_ITERATIONS + 5},
+        )
+        return final.get("response") or GAVE_UP_RESPONSE
+    finally:
         await log_queue.put(None)
-
-    return final_response
