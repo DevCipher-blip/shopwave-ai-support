@@ -321,16 +321,18 @@ async def _save_log(session_id: str, node: str, event_type: str, content: dict) 
         await db.commit()
 
 
-def _recorded_decision(messages: list) -> str:
-    """The outcome of the last process_refund_decision call this turn, if any."""
-    decision = "pending"
+def _recorded_outcome(messages: list) -> dict:
+    """The result of the last successful process_refund_decision call this turn, if any."""
+    outcome: dict = {}
     for msg in messages:
         if isinstance(msg, ToolMessage) and msg.name == "process_refund_decision":
             try:
-                decision = json.loads(msg.content).get("decision", decision)
+                parsed = json.loads(msg.content)
             except (TypeError, ValueError):
-                pass
-    return decision
+                continue
+            if isinstance(parsed, dict) and parsed.get("success"):
+                outcome = parsed
+    return outcome
 
 
 def route_after_triage(state: AgentState) -> str:
@@ -445,7 +447,12 @@ def build_graph(model: BaseChatModel, *, session_id: str, user_message: str, his
     async def finalize(state: AgentState) -> dict:
         last = state["messages"][-1]
         text = last.content if isinstance(last, AIMessage) and not last.tool_calls else ""
-        decision = _recorded_decision(state["messages"])
+        outcome = _recorded_outcome(state["messages"])
+        decision = outcome.get("decision", "pending")
+        if outcome.get("policy_override"):
+            # The model asked for more than the policy allows, so its wording
+            # can't be trusted to match what was recorded.
+            text = f"I wasn't able to approve that refund. {outcome['message']}"
         await emit(
             "decision",
             "decision",
