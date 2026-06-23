@@ -428,7 +428,7 @@ export default function ChatPage() {
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-line bg-card px-4 py-3 md:px-6">
           <div className="min-w-0">
             <h1 className="truncate font-display text-lg font-semibold leading-tight">
-              <span className="md:hidden">ShopWave returns</span>
+              <span className="md:hidden">ShopWave</span>
               <span className="hidden md:inline">{activeSession?.title ?? "Returns desk"}</span>
             </h1>
             <p className="text-xs text-muted">Aria, refund assistant</p>

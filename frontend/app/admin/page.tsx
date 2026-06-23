@@ -127,9 +127,11 @@ function FeedItem({ log }: { log: LiveLog }) {
     <li className="grid grid-cols-[4.5rem_4.5rem_1fr] gap-2 border-b border-line/70 py-1.5 font-mono text-xs last:border-0">
       <time className="text-muted">{time}</time>
       <span className={cn(log.type === "decision" ? "text-tide-700" : "text-muted")}>{FEED_LABEL[log.type] ?? log.type}</span>
-      <span className="break-words text-ink/90">
+      <span className="min-w-0 text-ink/90 [overflow-wrap:anywhere]">
         {log.session_id && <span className="mr-1.5 text-muted">{log.session_id.slice(0, 8)}</span>}
-        {log.type === "decision" && log.decision ? <DecisionStamp decision={log.decision} /> : log.content}
+        {log.type === "decision" && log.decision
+          ? <DecisionStamp decision={log.decision} />
+          : log.content.length > 140 ? `${log.content.slice(0, 140)}…` : log.content}
       </span>
     </li>
   );
