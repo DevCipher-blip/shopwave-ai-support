@@ -4,12 +4,14 @@ FastAPI application — chat, admin, voice endpoints.
 import asyncio
 import json
 import re
+import secrets
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import select, func, desc
@@ -17,17 +19,10 @@ from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.database.db import engine, AsyncSessionLocal
-from app.database.models import (
-    Base,
-    ChatSession,
-    Message,
-    AgentLog,
-    Customer,
-    Order,
-    RefundHistory,
-)
+from app.database.models import AgentLog, Base, ChatSession, Customer, Message
 from app.agent.graph import run_agent
 from app.database.seed import seed
+from app.stt import ALLOWED_AUDIO_TYPES, TranscriptionError, Transcriber, get_transcriber, sniff_audio
 
 
 # ── Session log broadcast registry ──────────────────────────────────────────
@@ -42,14 +37,6 @@ _admin_queues: list[asyncio.Queue] = []
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
 MAX_MESSAGE_LENGTH = 2000
-ALLOWED_AUDIO_TYPES = {
-    "audio/webm",
-    "audio/mp4",
-    "audio/mpeg",
-    "audio/wav",
-    "audio/x-wav",
-    "audio/mp3",
-}
 SAFE_FAILURE_RESPONSE = (
     "I couldn't complete that request. Please try again with your order number "
     "or the email address on the order."
@@ -58,7 +45,7 @@ SAFE_FAILURE_RESPONSE = (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create tables + seed on startup
+    settings.check(needs_groq=True)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     seeded = await seed()
@@ -71,11 +58,30 @@ app = FastAPI(title="ShopWave AI Refund Agent", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins.split(","),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors_origin_list,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+_bearer = HTTPBearer(auto_error=False)
+
+
+def require_admin(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> None:
+    if not settings.admin_token:
+        raise HTTPException(status_code=503, detail="Admin access is disabled. Set ADMIN_TOKEN.")
+    supplied = credentials.credentials if credentials else ""
+    if not secrets.compare_digest(supplied.encode(), settings.admin_token.encode()):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing admin token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+admin = APIRouter(prefix="/api/admin", dependencies=[Depends(require_admin)])
 
 
 # ── Pydantic schemas ─────────────────────────────────────────────────────────
@@ -342,21 +348,20 @@ async def chat_stream(session_id: str, message: str):
 
 # ── Admin SSE stream ──────────────────────────────────────────────────────────
 
-@app.get("/api/admin/stream")
+@admin.get("/stream")
 async def admin_stream():
-    """SSE stream for the admin dashboard — receives all agent events across all sessions."""
+    """SSE stream for the admin dashboard: every agent event across all sessions.
+
+    sse-starlette sends keep-alive pings, so an idle dashboard stays connected.
+    """
     queue: asyncio.Queue = asyncio.Queue()
     _admin_queues.append(queue)
 
     async def event_generator():
         try:
             while True:
-                event = await asyncio.wait_for(queue.get(), timeout=30)
+                event = await queue.get()
                 yield {"event": "log", "data": json.dumps(event)}
-        except asyncio.TimeoutError:
-            yield {"event": "heartbeat", "data": "{}"}
-        except asyncio.CancelledError:
-            pass
         finally:
             if queue in _admin_queues:
                 _admin_queues.remove(queue)
@@ -366,8 +371,8 @@ async def admin_stream():
 
 # ── Admin REST endpoints ──────────────────────────────────────────────────────
 
-@app.get("/api/admin/sessions")
-async def list_sessions(limit: int = 20):
+@admin.get("/sessions")
+async def list_sessions(limit: Annotated[int, Query(ge=1, le=100)] = 20):
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(ChatSession).order_by(desc(ChatSession.started_at)).limit(limit)
@@ -387,8 +392,12 @@ async def list_sessions(limit: int = 20):
     ]
 
 
-@app.get("/api/admin/sessions/{session_id}/logs")
+@admin.get("/sessions/{session_id}/logs")
 async def get_session_logs(session_id: str):
+    try:
+        session_id = _normalize_session_id(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(AgentLog)
@@ -409,7 +418,7 @@ async def get_session_logs(session_id: str):
     ]
 
 
-@app.get("/api/admin/stats")
+@admin.get("/stats")
 async def get_stats():
     async with AsyncSessionLocal() as db:
         total_sessions = (await db.execute(select(func.count(ChatSession.session_id)))).scalar()
@@ -439,7 +448,7 @@ async def get_stats():
     }
 
 
-@app.get("/api/admin/customers")
+@admin.get("/customers")
 async def list_customers():
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Customer).order_by(Customer.name))
@@ -459,33 +468,52 @@ async def list_customers():
     ]
 
 
-# ── Voice endpoint (Groq Whisper STT) ────────────────────────────────────────
+app.include_router(admin)
+
+
+# ── Voice endpoint ────────────────────────────────────────────────────────────
+
+_MULTIPART_OVERHEAD = 64 * 1024
+
+
+async def _read_capped(file: UploadFile, limit: int) -> bytes:
+    chunks: list[bytes] = []
+    size = 0
+    while chunk := await file.read(64 * 1024):
+        size += len(chunk)
+        if size > limit:
+            raise HTTPException(status_code=413, detail=f"Audio file too large (max {limit // (1024 * 1024)} MB)")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
 
 @app.post("/api/voice/transcribe")
-async def transcribe_audio(file: UploadFile = File(...)):
-    """
-    Accepts an audio file (webm/mp4/wav) and returns transcribed text
-    using Groq's Whisper large-v3-turbo (free tier).
-    """
-    import groq
+async def transcribe_audio(
+    request: Request,
+    file: Annotated[UploadFile, File()],
+    transcribe: Annotated[Transcriber, Depends(get_transcriber)],
+):
+    """Transcribe a short voice clip (webm/ogg/mp4/mp3/wav) for the chat input."""
+    limit = settings.max_audio_bytes
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > limit + _MULTIPART_OVERHEAD:
+        raise HTTPException(status_code=413, detail=f"Audio file too large (max {limit // (1024 * 1024)} MB)")
 
-    if file.content_type not in ALLOWED_AUDIO_TYPES:
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if content_type not in ALLOWED_AUDIO_TYPES:
         raise HTTPException(status_code=415, detail="Unsupported audio format")
 
-    audio_bytes = await file.read()
-    if len(audio_bytes) > 25 * 1024 * 1024:  # 25MB limit
-        raise HTTPException(status_code=413, detail="Audio file too large (max 25MB)")
+    audio = await _read_capped(file, limit)
+    if not audio:
+        raise HTTPException(status_code=400, detail="Audio file is empty")
+    if sniff_audio(audio) is None:
+        raise HTTPException(status_code=415, detail="File content is not a supported audio format")
 
-    client = groq.AsyncGroq(api_key=settings.groq_api_key)
-
-    transcription = await client.audio.transcriptions.create(
-        file=(file.filename or "audio.webm", audio_bytes),
-        model="whisper-large-v3-turbo",
-        response_format="text",
-        language="en",
-    )
-
-    return {"text": transcription if isinstance(transcription, str) else transcription.text}
+    try:
+        text = await transcribe(file.filename or "audio.webm", audio)
+    except TranscriptionError as exc:
+        raise HTTPException(status_code=502, detail="Speech-to-text service failed") from exc
+    return {"text": text.strip()}
 
 
 # ── Health check ─────────────────────────────────────────────────────────────

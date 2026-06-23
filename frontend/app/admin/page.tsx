@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, RefreshCw, CheckCircle, XCircle, AlertTriangle,
   Clock, Users, DollarSign, TrendingUp, Activity,
 } from "lucide-react";
 import {
-  fetchStats, fetchSessions, subscribeAdminStream,
+  ApiError, fetchStats, fetchSessions, subscribeAdminStream,
   type AdminStats, type SessionSummary, type AgentLog,
 } from "@/lib/api";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
@@ -106,7 +106,39 @@ function SessionRow({ session }: { session: SessionSummary }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+const TOKEN_KEY = "shopwave-admin-token";
+
+function TokenForm({ error, onSubmit }: { error: string | null; onSubmit: (token: string) => void }) {
+  const [value, setValue] = useState("");
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+      <form
+        onSubmit={(e) => { e.preventDefault(); if (value.trim()) onSubmit(value.trim()); }}
+        className="w-full max-w-sm bg-white border border-slate-200 rounded-2xl shadow-sm p-6 space-y-4"
+      >
+        <h1 className="font-semibold text-slate-900">Admin sign-in</h1>
+        <label className="block text-sm text-slate-600">
+          Admin token
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900"
+          />
+        </label>
+        {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+        <button type="submit" className="w-full rounded-lg bg-blue-600 text-white text-sm font-medium py-2">
+          Open dashboard
+        </button>
+      </form>
+    </div>
+  );
+}
+
 export default function AdminPage() {
+  const [token, setToken] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [liveLogs, setLiveLogs] = useState<(AgentLog & { session_id?: string })[]>([]);
@@ -114,27 +146,59 @@ export default function AdminPage() {
   const [autoScroll, setAutoScroll] = useState(true);
   const logScrollRef = useRef<HTMLDivElement>(null);
 
-  const loadData = async () => {
+  const signOut = useCallback((message: string | null) => {
+    window.sessionStorage.removeItem(TOKEN_KEY);
+    setToken(null);
+    setAuthError(message);
+  }, []);
+
+  const loadData = useCallback(async () => {
+    if (!token) return;
     setLoading(true);
-    const [s, sess] = await Promise.all([fetchStats(), fetchSessions(30)]);
-    setStats(s);
-    setSessions(sess);
-    setLoading(false);
-  };
+    try {
+      const [s, sess] = await Promise.all([fetchStats(token), fetchSessions(token, 30)]);
+      setStats(s);
+      setSessions(sess);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) signOut("That token was rejected.");
+      else if (err instanceof ApiError && err.status === 503) signOut("Admin access is disabled on the server (ADMIN_TOKEN not set).");
+    } finally {
+      setLoading(false);
+    }
+  }, [token, signOut]);
 
   useEffect(() => {
-    loadData();
-    const es = subscribeAdminStream((log) => {
-      setLiveLogs((prev) => [...prev.slice(-199), log]);
-    });
-    return () => es.close();
+    setToken(window.sessionStorage.getItem(TOKEN_KEY));
   }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    loadData();
+    return subscribeAdminStream(
+      token,
+      (log) => setLiveLogs((prev) => [...prev.slice(-199), log]),
+      () => undefined,
+    );
+  }, [token, loadData]);
 
   useEffect(() => {
     if (autoScroll && logScrollRef.current) {
       logScrollRef.current.scrollTop = logScrollRef.current.scrollHeight;
     }
   }, [liveLogs, autoScroll]);
+
+  if (!token) {
+    return (
+      <TokenForm
+        error={authError}
+        onSubmit={(value) => {
+          window.sessionStorage.setItem(TOKEN_KEY, value);
+          setAuthError(null);
+          setToken(value);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">

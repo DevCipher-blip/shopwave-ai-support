@@ -1,9 +1,6 @@
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { parseSseBuffer } from "./sse";
 
-export interface ChatResponse {
-  session_id: string;
-  response: string;
-}
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export interface ChatSession {
   session_id: string;
@@ -54,34 +51,7 @@ export interface AdminStats {
   approval_rate: number;
 }
 
-export interface Customer {
-  customer_id: string;
-  name: string;
-  email: string;
-  loyalty_tier: string;
-  fraud_flag: boolean;
-  total_orders: number;
-  total_spent: number;
-}
-
 // ── Chat ─────────────────────────────────────────────────────────────────────
-
-export async function sendMessage(
-  message: string,
-  sessionId: string | null
-): Promise<ChatResponse> {
-  const res = await fetch(`${API}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, session_id: sessionId }),
-  });
-  if (!res.ok) {
-    const error = new Error(`Chat error: ${res.status}`) as Error & { status?: number };
-    error.status = res.status;
-    throw error;
-  }
-  return res.json();
-}
 
 export async function createChatSession(): Promise<ChatSession> {
   const res = await fetch(`${API}/api/chat/sessions`, {
@@ -154,32 +124,63 @@ export async function transcribeAudio(blob: Blob): Promise<string> {
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
-export async function fetchStats(): Promise<AdminStats> {
-  const res = await fetch(`${API}/api/admin/stats`, { cache: "no-store" });
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+function adminHeaders(token: string): HeadersInit {
+  return { Authorization: `Bearer ${token}` };
+}
+
+async function adminGet<T>(path: string, token: string): Promise<T> {
+  const res = await fetch(`${API}/api/admin${path}`, { cache: "no-store", headers: adminHeaders(token) });
+  if (!res.ok) throw new ApiError(`Admin request failed: ${res.status}`, res.status);
   return res.json();
 }
 
-export async function fetchSessions(limit = 20): Promise<SessionSummary[]> {
-  const res = await fetch(`${API}/api/admin/sessions?limit=${limit}`, { cache: "no-store" });
-  return res.json();
+export function fetchStats(token: string): Promise<AdminStats> {
+  return adminGet("/stats", token);
 }
 
-export async function fetchSessionLogs(sessionId: string): Promise<AgentLog[]> {
-  const res = await fetch(`${API}/api/admin/sessions/${sessionId}/logs`, { cache: "no-store" });
-  return res.json();
+export function fetchSessions(token: string, limit = 20): Promise<SessionSummary[]> {
+  return adminGet(`/sessions?limit=${limit}`, token);
 }
 
-export async function fetchCustomers(): Promise<Customer[]> {
-  const res = await fetch(`${API}/api/admin/customers`, { cache: "no-store" });
-  return res.json();
-}
-
+/**
+ * Admin event stream. EventSource cannot send an Authorization header, so this
+ * reads the SSE response through fetch. Returns a function that closes it.
+ */
 export function subscribeAdminStream(
-  onLog: (log: AgentLog & { session_id: string }) => void
-): EventSource {
-  const es = new EventSource(`${API}/api/admin/stream`);
-  es.addEventListener("log", (e) => {
-    try { onLog(JSON.parse((e as MessageEvent).data)); } catch {}
+  token: string,
+  onLog: (log: AgentLog & { session_id: string }) => void,
+  onError: (err: unknown) => void
+): () => void {
+  const controller = new AbortController();
+
+  (async () => {
+    const res = await fetch(`${API}/api/admin/stream`, {
+      headers: { ...adminHeaders(token), Accept: "text/event-stream" },
+      signal: controller.signal,
+    });
+    if (!res.ok || !res.body) throw new ApiError(`Admin stream failed: ${res.status}`, res.status);
+
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const parsed = parseSseBuffer(buffer + value);
+      buffer = parsed.rest;
+      for (const event of parsed.events) {
+        if (event.event !== "log") continue;
+        try { onLog(JSON.parse(event.data)); } catch { /* skip malformed event */ }
+      }
+    }
+  })().catch((err) => {
+    if (!controller.signal.aborted) onError(err);
   });
-  return es;
+
+  return () => controller.abort();
 }
