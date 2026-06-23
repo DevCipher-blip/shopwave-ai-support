@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
-import { Mic, MicOff, Loader2 } from "lucide-react";
+import { useCallback, useRef, useState } from "react";
+import { Loader2, Mic, Square } from "lucide-react";
 import { transcribeAudio } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -15,90 +15,77 @@ type VoiceState = "idle" | "recording" | "processing";
 export function VoiceInput({ onTranscript, disabled }: Props) {
   const [state, setState] = useState<VoiceState>("idle");
   const [error, setError] = useState<string | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
   const startRecording = useCallback(async () => {
     setError(null);
+    let stream: MediaStream;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-          ? "audio/webm;codecs=opus"
-          : "audio/webm",
-      });
-      chunksRef.current = [];
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-      mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        setState("processing");
-        try {
-          const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-          const text = await transcribeAudio(blob);
-          if (text?.trim()) {
-            onTranscript(text.trim());
-          } else {
-            setError("No speech detected");
-          }
-        } catch {
-          setError("Transcription failed. Check your microphone.");
-        } finally {
-          setState("idle");
-        }
-      };
-      mediaRecorder.start();
-      mediaRecorderRef.current = mediaRecorder;
-      setState("recording");
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
-      setError("Microphone access denied");
-      setState("idle");
+      setError("Microphone access was blocked.");
+      return;
     }
+    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
+    const recorder = new MediaRecorder(stream, { mimeType });
+    chunksRef.current = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunksRef.current.push(e.data);
+    };
+    recorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      setState("processing");
+      try {
+        const text = await transcribeAudio(new Blob(chunksRef.current, { type: "audio/webm" }));
+        if (text.trim()) onTranscript(text.trim());
+        else setError("No speech detected.");
+      } catch {
+        setError("Transcription failed. Try again or type your message.");
+      } finally {
+        setState("idle");
+      }
+    };
+    recorder.start();
+    recorderRef.current = recorder;
+    setState("recording");
   }, [onTranscript]);
-
-  const stopRecording = useCallback(() => {
-    mediaRecorderRef.current?.stop();
-  }, []);
 
   const handleClick = () => {
     if (disabled) return;
     if (state === "idle") startRecording();
-    else if (state === "recording") stopRecording();
+    else if (state === "recording") recorderRef.current?.stop();
   };
+
+  const label = state === "recording" ? "Stop recording" : state === "processing" ? "Transcribing" : "Speak your message";
 
   return (
     <div className="relative">
       <button
+        type="button"
         onClick={handleClick}
         disabled={disabled || state === "processing"}
-        title={state === "recording" ? "Stop recording" : "Start voice input"}
+        aria-label={label}
+        aria-pressed={state === "recording"}
+        title={label}
         className={cn(
-          "p-2 rounded-lg transition-all duration-200 relative",
-          state === "recording"
-            ? "bg-red-500/20 text-red-400 hover:bg-red-500/30"
-            : state === "processing"
-            ? "text-brand-400 cursor-wait"
-            : "text-gray-400 hover:text-white hover:bg-surface-4",
-          disabled && "opacity-40 cursor-not-allowed"
+          "relative rounded-lg p-2 transition-colors",
+          state === "recording" ? "bg-deny-soft text-deny" : "text-muted hover:bg-paper hover:text-ink",
+          (disabled || state === "processing") && "cursor-not-allowed opacity-50"
         )}
       >
         {state === "processing" ? (
-          <Loader2 className="w-4 h-4 animate-spin" />
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
         ) : state === "recording" ? (
-          <>
-            <MicOff className="w-4 h-4" />
-            {/* Pulse ring */}
-            <span className="absolute inset-0 rounded-lg border-2 border-red-500 animate-ping opacity-40" />
-          </>
+          <Square className="h-4 w-4 fill-current" aria-hidden />
         ) : (
-          <Mic className="w-4 h-4" />
+          <Mic className="h-4 w-4" aria-hidden />
         )}
       </button>
       {error && (
-        <div className="absolute bottom-full mb-1 right-0 bg-red-900/90 text-red-200 text-xs px-2 py-1 rounded whitespace-nowrap">
+        <p role="alert" className="absolute bottom-full right-0 mb-2 whitespace-nowrap rounded-md bg-ink px-2 py-1 text-xs text-card">
           {error}
-        </div>
+        </p>
       )}
     </div>
   );

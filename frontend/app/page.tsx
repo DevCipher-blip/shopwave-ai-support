@@ -2,11 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
-import {
-  Send, Volume2, VolumeX, LayoutDashboard,
-  ShoppingBag, RefreshCw, Bot, User, Loader2, Plus, MessageSquare,
-  Sparkles, Shield,
-} from "lucide-react";
+import { ListTree, Loader2, Plus, Send, Volume2, VolumeX } from "lucide-react";
 import {
   createChatSession,
   fetchChatMessages,
@@ -15,6 +11,7 @@ import {
   type ChatMessage,
 } from "@/lib/api";
 import { cn, formatDate, newId } from "@/lib/utils";
+import { MarkdownText } from "@/components/MarkdownText";
 import { ReasoningPanel } from "@/components/ReasoningPanel";
 import { VoiceInput } from "@/components/VoiceInput";
 
@@ -42,13 +39,17 @@ interface StoredSessionMeta {
   updatedAt: string;
 }
 
-const WELCOME = `Hi! I'm **Aria**, your ShopWave AI support agent.
+const WELCOME = `Hi, I'm **Aria** from the ShopWave returns desk.
 
-I can help you with **refund and return requests** for your orders.
+I can check whether an order qualifies for a refund and record the decision. To start, tell me:
+- your **order number** (for example ORD-10015) or the email on the order
+- what went wrong with it`;
 
-To get started, please share:
-- Your **order number** (e.g. ORD-10021) or **email address**
-- The issue you're experiencing`;
+const EXAMPLES = [
+  "My order ORD-10015 arrived damaged",
+  "I changed my mind about ORD-10067",
+  "ORD-09980 stopped working",
+];
 
 const STORAGE_KEY = "shopwave-chat-sessions-v1";
 const DEFAULT_SESSION_TITLE = "New conversation";
@@ -84,6 +85,7 @@ export default function ChatPage() {
   const [showLogs, setShowLogs] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [bootError, setBootError] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const eventSourcesRef = useRef<Record<string, EventSource>>({});
@@ -200,7 +202,7 @@ export default function ChatPage() {
     };
 
     bootstrap().catch(() => {
-      if (!cancelled) setIsBootstrapping(false);
+      if (!cancelled) setBootError(true);
     });
 
     return () => {
@@ -344,341 +346,272 @@ export default function ChatPage() {
     await createAndActivateSession();
   };
 
-  if (isBootstrapping) {
+  if (isBootstrapping || bootError) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
-        <div className="w-full max-w-sm rounded-3xl border border-slate-200 bg-white shadow-sm p-8 text-center">
-          <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center shadow-sm mx-auto">
-            <Shield className="w-6 h-6 text-white" />
-          </div>
-          <p className="mt-4 text-sm text-slate-500">Starting session…</p>
+      <main className="flex min-h-screen items-center justify-center bg-paper px-4">
+        <div className="w-full max-w-sm rounded-xl border border-line bg-card p-8 text-center">
+          <p className="font-display text-xl font-semibold">ShopWave Returns Desk</p>
+          {bootError ? (
+            <>
+              <p role="alert" className="mt-3 text-sm text-deny">
+                The support service isn&apos;t reachable right now.
+              </p>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="mt-5 rounded-lg bg-tide-700 px-4 py-2 text-sm font-medium text-card hover:bg-tide-800"
+              >
+                Try again
+              </button>
+            </>
+          ) : (
+            <p className="mt-3 flex items-center justify-center gap-2 text-sm text-muted" role="status">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Opening a conversation…
+            </p>
+          )}
         </div>
-      </div>
+      </main>
     );
   }
 
-  return (
-    <div className="flex h-screen bg-slate-50 overflow-hidden">
+  const canSend = Boolean(input.trim()) && !activeIsLoading && Boolean(activeSession);
+  const showExamples = Boolean(activeSession) && !activeSession?.messages?.length;
 
-      {/* ── Sidebar ─────────────────────────────────────────────────── */}
-      <aside className="hidden md:flex flex-col w-72 bg-white border-r border-slate-200 shrink-0">
-        <div className="p-4 border-b border-slate-100">
-          <div className="flex items-center gap-2.5 mb-4">
-            <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center shadow-sm shrink-0">
-              <ShoppingBag className="w-[18px] h-[18px] text-white" />
-            </div>
-            <div>
-              <p className="font-semibold text-slate-900 text-sm leading-tight">ShopWave Support</p>
-              <p className="text-xs text-slate-500">AI Refund &amp; Returns</p>
-            </div>
-          </div>
+  return (
+    <div className="flex h-dvh overflow-hidden bg-paper">
+      <aside aria-label="Conversations" className="hidden w-72 shrink-0 flex-col border-r border-line bg-card md:flex">
+        <div className="px-5 pb-4 pt-5">
+          <p className="font-display text-xl font-semibold leading-tight">ShopWave</p>
+          <p className="text-sm text-muted">Returns desk</p>
           <button
+            type="button"
             onClick={createSession}
-            className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[.98] text-white text-sm font-medium px-4 py-2.5 transition-all shadow-sm"
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-tide-700 px-4 py-2.5 text-sm font-medium text-card hover:bg-tide-800"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="h-4 w-4" aria-hidden />
             New conversation
           </button>
         </div>
-
-        <div className="mx-3 mt-3 flex items-start gap-2 rounded-xl bg-blue-50 border border-blue-100 px-3 py-2.5">
-          <Shield className="w-3.5 h-3.5 text-blue-500 shrink-0 mt-0.5" />
-          <p className="text-xs text-blue-700 leading-relaxed">
-            Aria handles ShopWave order support only — refunds, returns, and delivery queries.
-          </p>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-2 py-3">
-          {sessions.length > 0 && (
-            <p className="px-2 mb-2 text-[10px] font-semibold text-slate-400 uppercase tracking-widest">
-              Conversations
-            </p>
-          )}
-          <div className="space-y-0.5">
+        <div className="perforation mx-5" />
+        <nav className="flex-1 overflow-y-auto px-3 py-3">
+          <ul className="space-y-1">
             {sessions.map((session) => {
-              const preview = session.messages?.find((m) => m.role === "assistant")?.content;
               const isActive = session.id === activeSessionId;
               return (
-                <button
-                  key={session.id}
-                  onClick={() => selectSession(session.id)}
-                  className={cn(
-                    "w-full text-left rounded-xl px-3 py-2.5 transition-colors border",
-                    isActive
-                      ? "bg-blue-50 border-blue-200"
-                      : "hover:bg-slate-50 border-transparent"
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-1 mb-0.5">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <MessageSquare className={cn("w-3.5 h-3.5 shrink-0", isActive ? "text-blue-500" : "text-slate-400")} />
-                      <span className={cn("text-sm font-medium truncate", isActive ? "text-blue-700" : "text-slate-700")}>
-                        {session.title}
-                      </span>
-                    </div>
-                    {session.isLoading && <Loader2 className="w-3 h-3 animate-spin text-blue-500 shrink-0" />}
-                  </div>
-                  <p className="text-xs text-slate-400 pl-5 line-clamp-1">
-                    {preview
-                      ? preview.replace(/\*\*/g, "").slice(0, 70)
-                      : formatDate(session.updatedAt)}
-                  </p>
-                </button>
+                <li key={session.id}>
+                  <button
+                    type="button"
+                    onClick={() => selectSession(session.id)}
+                    aria-current={isActive ? "true" : undefined}
+                    className={cn(
+                      "w-full rounded-lg px-3 py-2.5 text-left transition-colors",
+                      isActive ? "bg-tide-50 text-tide-800" : "hover:bg-paper"
+                    )}
+                  >
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-medium">{session.title}</span>
+                      {session.isLoading && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-label="Working" />}
+                    </span>
+                    <span className="block text-xs text-muted">{formatDate(session.updatedAt)}</span>
+                  </button>
+                </li>
               );
             })}
-          </div>
-        </div>
+          </ul>
+        </nav>
+        <p className="border-t border-line px-5 py-3 text-xs text-muted">
+          Decisions follow the ShopWave refund policy v3.2. Amounts are set by the policy engine, not the chat.
+        </p>
       </aside>
 
-      {/* ── Main Chat ───────────────────────────────────────────────── */}
-      <div className="flex flex-1 flex-col overflow-hidden min-w-0">
-
-        {/* Header */}
-        <header className="flex items-center justify-between h-14 px-5 bg-white border-b border-slate-200 shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center shadow-sm shrink-0">
-              <Bot className="w-4 h-4 text-white" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="font-semibold text-slate-900 text-sm leading-tight truncate">
-                {activeSession?.title ?? "ShopWave Support"}
-              </h2>
-              <div className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                <span className="text-xs text-slate-500">Aria · Online</span>
-              </div>
-            </div>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-line bg-card px-4 py-3 md:px-6">
+          <div className="min-w-0">
+            <h1 className="truncate font-display text-lg font-semibold leading-tight">
+              <span className="md:hidden">ShopWave returns</span>
+              <span className="hidden md:inline">{activeSession?.title ?? "Returns desk"}</span>
+            </h1>
+            <p className="text-xs text-muted">Aria, refund assistant</p>
           </div>
 
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex shrink-0 items-center gap-1">
             <button
+              type="button"
               onClick={() => setTtsEnabled((v) => !v)}
-              className={cn(
-                "p-2 rounded-lg transition-colors",
-                ttsEnabled ? "text-blue-600 hover:bg-blue-50" : "text-slate-400 hover:bg-slate-100"
-              )}
-              title={ttsEnabled ? "Mute voice" : "Enable voice"}
+              aria-pressed={ttsEnabled}
+              aria-label={ttsEnabled ? "Stop reading replies aloud" : "Read replies aloud"}
+              title={ttsEnabled ? "Stop reading replies aloud" : "Read replies aloud"}
+              className="rounded-lg p-2 text-muted hover:bg-paper hover:text-ink"
             >
-              {ttsEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+              {ttsEnabled ? <Volume2 className="h-4 w-4" aria-hidden /> : <VolumeX className="h-4 w-4" aria-hidden />}
             </button>
-
             <button
+              type="button"
               onClick={() => setShowLogs((v) => !v)}
+              aria-pressed={showLogs}
               className={cn(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
-                showLogs ? "bg-violet-100 text-violet-700" : "text-slate-500 hover:bg-slate-100"
+                "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium",
+                showLogs ? "bg-tide-50 text-tide-800" : "text-muted hover:bg-paper hover:text-ink"
               )}
             >
-              <Sparkles className="w-3.5 h-3.5" />
-              Reasoning
+              <ListTree className="h-4 w-4" aria-hidden />
+              <span className="hidden sm:inline">Reasoning</span>
               {activeLogs.length > 0 && (
-                <span className="text-[10px] bg-violet-200 text-violet-700 px-1.5 rounded-full font-semibold">
-                  {activeLogs.length}
-                </span>
+                <span className="rounded-full bg-tide-700 px-1.5 font-mono text-[11px] text-card">{activeLogs.length}</span>
               )}
             </button>
-
             <button
+              type="button"
               onClick={createSession}
-              className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+              aria-label="New conversation"
               title="New conversation"
+              className="rounded-lg p-2 text-muted hover:bg-paper hover:text-ink md:hidden"
             >
-              <RefreshCw className="w-4 h-4" />
+              <Plus className="h-4 w-4" aria-hidden />
             </button>
-
             <Link
               href="/admin"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-500 hover:bg-slate-100 text-xs font-medium transition-colors border border-slate-200 hover:border-slate-300"
+              className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium text-ink hover:border-tide-700 hover:text-tide-800"
             >
-              <LayoutDashboard className="w-3.5 h-3.5" />
               Admin
             </Link>
-
           </div>
         </header>
 
-        {/* Messages + optional reasoning panel */}
-        <div className="flex flex-1 overflow-hidden">
-          <div className="flex-1 overflow-y-auto">
-            {isBootstrapping ? (
-              <div className="h-full flex flex-col items-center justify-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center shadow-sm">
-                  <Bot className="w-6 h-6 text-white" />
-                </div>
-                <p className="text-sm text-slate-500">Starting conversation…</p>
-              </div>
-            ) : !activeSession ? (
-              <div className="h-full flex items-center justify-center">
-                <p className="text-sm text-slate-400">Select a conversation or start a new one.</p>
+        {sessions.length > 1 && (
+          <div className="border-b border-line bg-card px-4 py-2 md:hidden">
+            <label htmlFor="session-picker" className="sr-only">Conversation</label>
+            <select
+              id="session-picker"
+              value={activeSessionId ?? ""}
+              onChange={(e) => selectSession(e.target.value)}
+              className="w-full rounded-md border border-line bg-paper px-2 py-1.5 text-sm"
+            >
+              {sessions.map((session) => <option key={session.id} value={session.id}>{session.title}</option>)}
+            </select>
+          </div>
+        )}
+
+        <div className="flex min-h-0 flex-1">
+          <main className="flex-1 overflow-y-auto">
+            {!activeSession ? (
+              <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted">
+                Pick a conversation or start a new one.
               </div>
             ) : (
-              <div className="max-w-2xl mx-auto px-4 py-6 space-y-1">
-                {activeMessages.map((msg, idx) => (
+              <div role="log" aria-live="polite" aria-label="Conversation" className="mx-auto max-w-2xl space-y-4 px-4 py-6">
+                {activeMessages.map((msg) => (
                   <ChatBubble
                     key={msg.id}
                     message={msg}
                     isLoading={activeIsLoading && msg.content === "" && msg.role === "assistant"}
-                    showAvatar={idx === 0 || activeMessages[idx - 1]?.role !== msg.role}
                   />
                 ))}
+                {showExamples && (
+                  <div className="pl-11">
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">Try one of the demo orders</p>
+                    <div className="flex flex-wrap gap-2">
+                      {EXAMPLES.map((example) => (
+                        <button
+                          key={example}
+                          type="button"
+                          onClick={() => sendMessage(example)}
+                          className="rounded-full border border-line bg-card px-3 py-1.5 text-sm hover:border-tide-700 hover:text-tide-800"
+                        >
+                          {example}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div ref={scrollRef} />
               </div>
             )}
-          </div>
+          </main>
 
-          {showLogs && (
-            <ReasoningPanel logs={activeLogs} onClose={() => setShowLogs(false)} />
-          )}
+          {showLogs && <ReasoningPanel logs={activeLogs} onClose={() => setShowLogs(false)} />}
         </div>
 
-        {/* Input */}
-        <div className="bg-white border-t border-slate-200 px-4 pt-3 pb-4 shrink-0">
+        <form
+          onSubmit={(e) => { e.preventDefault(); sendMessage(input, activeSessionId ?? undefined); }}
+          className="shrink-0 border-t border-line bg-card px-4 pb-4 pt-3"
+        >
           <div
             className={cn(
-              "flex items-end gap-3 bg-slate-50 border rounded-2xl px-4 py-3 transition-all duration-150",
-              "border-slate-200 focus-within:border-blue-300 focus-within:ring-2 focus-within:ring-blue-50",
-              (!activeSession || activeIsLoading) && "opacity-60"
+              "mx-auto flex max-w-2xl items-end gap-2 rounded-xl border border-line bg-paper px-3 py-2 focus-within:border-tide-700",
+              (!activeSession || activeIsLoading) && "opacity-70"
             )}
           >
+            <label htmlFor="chat-input" className="sr-only">Message</label>
             <textarea
+              id="chat-input"
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="e.g. 'I received a defective item — order ORD-10021'"
-              className="flex-1 bg-transparent text-slate-900 text-sm placeholder-slate-400 resize-none outline-none min-h-[36px] max-h-[100px] leading-relaxed"
+              placeholder="Order number and what went wrong…"
+              className="max-h-28 min-h-[40px] flex-1 resize-none bg-transparent py-2 text-[15px] leading-relaxed placeholder:text-muted focus:outline-none"
               rows={1}
+              maxLength={2000}
               disabled={activeIsLoading || !activeSession}
             />
-            <div className="flex items-center gap-1.5 shrink-0 pb-px">
-              <VoiceInput
-                onTranscript={handleVoiceTranscript}
-                disabled={activeIsLoading || !activeSession}
-              />
-              <button
-                onClick={() => sendMessage(input, activeSessionId ?? undefined)}
-                disabled={!input.trim() || activeIsLoading || !activeSession}
-                className={cn(
-                  "p-2 rounded-xl transition-all",
-                  input.trim() && !activeIsLoading && activeSession
-                    ? "bg-blue-600 text-white hover:bg-blue-700 shadow-sm active:scale-95"
-                    : "bg-slate-200 text-slate-400 cursor-not-allowed"
-                )}
-              >
-                {activeIsLoading
-                  ? <Loader2 className="w-4 h-4 animate-spin" />
-                  : <Send className="w-4 h-4" />}
-              </button>
-            </div>
+            <VoiceInput onTranscript={handleVoiceTranscript} disabled={activeIsLoading || !activeSession} />
+            <button
+              type="submit"
+              disabled={!canSend}
+              aria-label="Send message"
+              className={cn(
+                "rounded-lg p-2.5 transition-colors",
+                canSend ? "bg-tide-700 text-card hover:bg-tide-800" : "cursor-not-allowed bg-line text-muted"
+              )}
+            >
+              {activeIsLoading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}
+            </button>
           </div>
-          <p className="text-xs text-slate-400 mt-1.5 text-center">
-            Enter to send · Shift+Enter for new line · Use microphone for voice input
+          <p className="mx-auto mt-1.5 hidden max-w-2xl text-xs text-muted sm:block">
+            Enter to send, Shift+Enter for a new line. The microphone transcribes speech into the box.
           </p>
-        </div>
+        </form>
       </div>
     </div>
   );
 }
 
-// ── Chat Bubble ──────────────────────────────────────────────────────────────
-function ChatBubble({
-  message,
-  isLoading,
-  showAvatar,
-}: {
-  message: Message;
-  isLoading: boolean;
-  showAvatar: boolean;
-}) {
+function ChatBubble({ message, isLoading }: { message: Message; isLoading: boolean }) {
   const isUser = message.role === "user";
-  const time = message.timestamp?.toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  });
+  const time = message.timestamp.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 
   return (
-    <div
-      className={cn(
-        "flex items-end gap-2.5 animate-slide-up",
-        isUser ? "flex-row-reverse" : "flex-row",
-        !showAvatar && (isUser ? "pr-[44px]" : "pl-[44px]")
-      )}
-    >
-      {showAvatar && (
+    <div className={cn("flex items-start gap-3 animate-slide-up", isUser && "flex-row-reverse")}>
+      <span
+        aria-hidden
+        className={cn(
+          "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-display text-sm font-semibold",
+          isUser ? "bg-line text-ink" : "bg-tide-700 text-card"
+        )}
+      >
+        {isUser ? "Y" : "A"}
+      </span>
+      <div className={cn("flex max-w-[85%] flex-col gap-1 sm:max-w-[75%]", isUser ? "items-end" : "items-start")}>
+        <span className="sr-only">{isUser ? "You said" : "Aria said"}</span>
         <div
           className={cn(
-            "w-8 h-8 rounded-full flex items-center justify-center shrink-0 shadow-sm",
-            isUser ? "bg-slate-200" : "bg-blue-600"
-          )}
-        >
-          {isUser
-            ? <User className="w-4 h-4 text-slate-600" />
-            : <Bot className="w-4 h-4 text-white" />}
-        </div>
-      )}
-
-      <div className={cn("flex flex-col gap-1", isUser ? "items-end" : "items-start", "max-w-[75%]")}>
-        <div
-          className={cn(
-            "px-4 py-3 rounded-2xl text-sm leading-relaxed",
-            isUser
-              ? "bg-blue-600 text-white rounded-br-sm shadow-sm"
-              : "bg-white text-slate-800 rounded-bl-sm border border-slate-200 shadow-sm"
+            "rounded-2xl px-4 py-3 text-[15px] leading-relaxed",
+            isUser ? "rounded-tr-sm bg-tide-700 text-card" : "rounded-tl-sm border border-line bg-card"
           )}
         >
           {isLoading ? (
-            <span className="flex gap-1.5 py-0.5 px-1">
+            <span className="flex gap-1.5 py-1" role="status" aria-label="Aria is checking the order">
               <span className="typing-dot" />
               <span className="typing-dot" />
               <span className="typing-dot" />
             </span>
           ) : (
-            <MarkdownText text={message.content} isUser={isUser} />
+            <MarkdownText text={message.content} inverted={isUser} />
           )}
         </div>
-        <span className="text-[10px] text-slate-400 px-1">{time}</span>
+        <time className="px-1 text-[11px] text-muted">{time}</time>
       </div>
     </div>
-  );
-}
-
-// ── Markdown ──────────────────────────────────────────────────────────────────
-function MarkdownText({ text, isUser }: { text: string; isUser: boolean }) {
-  const lines = text.split("\n");
-  return (
-    <>
-      {lines.map((line, i) => {
-        const isList = /^[-•]\s/.test(line);
-        const content = isList ? line.slice(2) : line;
-        const parts = content.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
-        const rendered = parts.map((part, j) => {
-          if (part.startsWith("**") && part.endsWith("**"))
-            return <strong key={j} className="font-semibold">{part.slice(2, -2)}</strong>;
-          if (part.startsWith("`") && part.endsWith("`"))
-            return (
-              <code
-                key={j}
-                className={cn(
-                  "px-1.5 py-0.5 rounded text-xs font-mono",
-                  isUser ? "bg-blue-500/30" : "bg-slate-100 text-slate-700"
-                )}
-              >
-                {part.slice(1, -1)}
-              </code>
-            );
-          return <span key={j}>{part}</span>;
-        });
-
-        return (
-          <span key={i} className={cn("block", isList && "flex gap-2 items-start")}>
-            {isList && (
-              <span className={cn("mt-2 w-1.5 h-1.5 rounded-full shrink-0 inline-block", isUser ? "bg-blue-300" : "bg-slate-400")} />
-            )}
-            <span className={isList ? undefined : "block"}>{rendered}</span>
-          </span>
-        );
-      })}
-    </>
   );
 }

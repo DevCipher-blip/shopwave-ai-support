@@ -1,115 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useState, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
+import { ArrowLeft, LogOut, RefreshCw } from "lucide-react";
 import {
-  ArrowLeft, RefreshCw, CheckCircle, XCircle, AlertTriangle,
-  Clock, Users, DollarSign, TrendingUp, Activity,
-} from "lucide-react";
-import {
-  ApiError, fetchStats, fetchSessions, subscribeAdminStream,
-  type AdminStats, type SessionSummary, type AgentLog,
+  ApiError, fetchSessions, fetchStats, subscribeAdminStream,
+  type AdminStats, type AgentLog, type SessionSummary,
 } from "@/lib/api";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
-
-// ── Live log item ─────────────────────────────────────────────────────────────
-
-function LiveLogItem({ log }: { log: AgentLog & { session_id?: string } }) {
-  const cfg: Record<string, { dot: string; label: string; text: string }> = {
-    reasoning:   { dot: "bg-violet-400", label: "THINK",    text: "text-violet-700"  },
-    tool_call:   { dot: "bg-amber-400",  label: "TOOL",     text: "text-amber-700"   },
-    tool_result: { dot: "bg-emerald-400",label: "RESULT",   text: "text-emerald-700" },
-    decision:    { dot: "bg-blue-400",   label: "DECISION", text: "text-blue-700"    },
-  };
-  const c = cfg[log.type] ?? { dot: "bg-slate-400", label: log.type.toUpperCase(), text: "text-slate-600" };
-
-  return (
-    <div className="flex gap-2.5 py-1.5 border-b border-slate-100 last:border-0 text-xs">
-      <span className="text-slate-400 font-mono shrink-0 mt-0.5 tabular-nums">
-        {new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-      </span>
-      <div className="flex items-center gap-1 shrink-0 mt-0.5">
-        <span className={cn("w-1.5 h-1.5 rounded-full", c.dot)} />
-        <span className={cn("font-bold text-[10px] w-[56px]", c.text)}>{c.label}</span>
-      </div>
-      {log.session_id && (
-        <span className="text-slate-300 font-mono text-[10px] mt-0.5 hidden xl:block shrink-0">
-          {log.session_id.slice(0, 8)}
-        </span>
-      )}
-      <span className="text-slate-600 break-all leading-relaxed">{log.content}</span>
-    </div>
-  );
-}
-
-// ── Stat card ─────────────────────────────────────────────────────────────────
-
-function StatCard({ label, value, icon: Icon, color, bg, sub }: {
-  label: string;
-  value: string | number;
-  icon: React.ComponentType<{ className?: string }>;
-  color: string;
-  bg: string;
-  sub?: string;
-}) {
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{label}</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">{value}</p>
-          {sub && <p className="text-xs text-slate-400 mt-0.5">{sub}</p>}
-        </div>
-        <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center", bg)}>
-          <Icon className={cn("w-5 h-5", color)} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Outcome badge ─────────────────────────────────────────────────────────────
-
-function OutcomeBadge({ outcome }: { outcome: string | null }) {
-  const config: Record<string, { label: string; className: string; Icon: React.ComponentType<{ className?: string }> }> = {
-    approve:  { label: "Approved",  className: "bg-emerald-50 text-emerald-700 border-emerald-200", Icon: CheckCircle   },
-    deny:     { label: "Denied",    className: "bg-red-50 text-red-700 border-red-200",             Icon: XCircle       },
-    escalate: { label: "Escalated", className: "bg-amber-50 text-amber-700 border-amber-200",       Icon: AlertTriangle },
-    pending:  { label: "Pending",   className: "bg-slate-50 text-slate-600 border-slate-200",       Icon: Clock         },
-  };
-  const cfg = config[outcome ?? "pending"] ?? config.pending;
-  return (
-    <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border", cfg.className)}>
-      <cfg.Icon className="w-3 h-3" />
-      {cfg.label}
-    </span>
-  );
-}
-
-// ── Session row ───────────────────────────────────────────────────────────────
-
-function SessionRow({ session }: { session: SessionSummary }) {
-  return (
-    <tr className="border-b border-slate-100 hover:bg-slate-50 transition-colors text-sm">
-      <td className="px-4 py-3 font-mono text-xs text-slate-400">{session.session_id.slice(0, 12)}…</td>
-      <td className="px-4 py-3 text-slate-700">{session.customer_id ?? <span className="text-slate-300">—</span>}</td>
-      <td className="px-4 py-3 text-slate-500 text-xs">{formatDate(session.started_at)}</td>
-      <td className="px-4 py-3"><OutcomeBadge outcome={session.outcome} /></td>
-      <td className="px-4 py-3">
-        {session.refund_amount != null
-          ? <span className="text-emerald-600 font-semibold">{formatCurrency(session.refund_amount)}</span>
-          : <span className="text-slate-300">—</span>}
-      </td>
-    </tr>
-  );
-}
-
-// ── Page ──────────────────────────────────────────────────────────────────────
+import { DecisionStamp } from "@/components/DecisionStamp";
 
 interface Dashboard {
   stats: AdminStats;
   sessions: SessionSummary[];
 }
+
+type LiveLog = AgentLog & { session_id?: string };
 
 async function loadDashboard(token: string): Promise<Dashboard> {
   const [stats, sessions] = await Promise.all([fetchStats(token), fetchSessions(token, 30)]);
@@ -131,64 +37,128 @@ function storeToken(token: string | null) {
 }
 
 function useAdminToken(): string | null {
-  return useSyncExternalStore(
-    subscribeToken,
-    () => window.sessionStorage.getItem(TOKEN_KEY),
-    () => null,
-  );
+  return useSyncExternalStore(subscribeToken, () => window.sessionStorage.getItem(TOKEN_KEY), () => null);
 }
 
 function TokenForm({ error, onSubmit }: { error: string | null; onSubmit: (token: string) => void }) {
   const [value, setValue] = useState("");
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+    <main className="flex min-h-screen items-center justify-center bg-paper px-4">
       <form
         onSubmit={(e) => { e.preventDefault(); if (value.trim()) onSubmit(value.trim()); }}
-        className="w-full max-w-sm bg-white border border-slate-200 rounded-2xl shadow-sm p-6 space-y-4"
+        className="w-full max-w-sm space-y-4 rounded-xl border border-line bg-card p-6"
       >
-        <h1 className="font-semibold text-slate-900">Admin sign-in</h1>
-        <label className="block text-sm text-slate-600">
-          Admin token
+        <div>
+          <h1 className="font-display text-xl font-semibold">Returns desk admin</h1>
+          <p className="mt-1 text-sm text-muted">Enter the ADMIN_TOKEN configured on the API.</p>
+        </div>
+        <div>
+          <label htmlFor="admin-token" className="text-sm font-medium">Admin token</label>
           <input
+            id="admin-token"
             type="password"
             autoComplete="current-password"
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900"
+            className="mt-1 w-full rounded-lg border border-line bg-paper px-3 py-2 focus:border-tide-700 focus:outline-none"
           />
-        </label>
-        {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
-        <button type="submit" className="w-full rounded-lg bg-blue-600 text-white text-sm font-medium py-2">
+        </div>
+        {error && <p role="alert" className="text-sm text-deny">{error}</p>}
+        <button type="submit" className="w-full rounded-lg bg-tide-700 py-2 text-sm font-medium text-card hover:bg-tide-800">
           Open dashboard
         </button>
+        <Link href="/" className="block text-center text-sm text-muted underline-offset-2 hover:underline">
+          Back to the chat
+        </Link>
       </form>
+    </main>
+  );
+}
+
+function Figure({ label, value, note }: { label: string; value: string; note?: string }) {
+  return (
+    <div className="px-5 py-4">
+      <p className="text-xs font-medium uppercase tracking-wider text-muted">{label}</p>
+      <p className="mt-1 font-display text-3xl font-semibold tabular-nums">{value}</p>
+      {note && <p className="text-xs text-muted">{note}</p>}
     </div>
+  );
+}
+
+function OutcomeSplit({ stats }: { stats: AdminStats }) {
+  const parts = [
+    { key: "approve", label: "Approved", value: stats.approved, bar: "bg-approve" },
+    { key: "deny", label: "Denied", value: stats.denied, bar: "bg-deny" },
+    { key: "escalate", label: "Escalated", value: stats.escalated, bar: "bg-escalate" },
+    { key: "pending", label: "Open", value: stats.pending, bar: "bg-line" },
+  ];
+  const total = Math.max(stats.total_sessions, 1);
+  return (
+    <section aria-labelledby="split-heading" className="rounded-xl border border-line bg-card p-5">
+      <h2 id="split-heading" className="font-display text-base font-semibold">Outcomes</h2>
+      <div className="mt-3 flex h-3 overflow-hidden rounded-full bg-paper" aria-hidden>
+        {parts.map((p) => p.value > 0 && (
+          <div key={p.key} className={p.bar} style={{ width: `${(p.value / total) * 100}%` }} />
+        ))}
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-4">
+        {parts.map((p) => (
+          <div key={p.key} className="flex items-center gap-2">
+            <span aria-hidden className={cn("h-2.5 w-2.5 rounded-sm", p.bar)} />
+            <dt className="text-muted">{p.label}</dt>
+            <dd className="ml-auto font-mono tabular-nums sm:ml-0">{p.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+const FEED_LABEL: Record<string, string> = {
+  reasoning: "model",
+  tool_call: "call",
+  tool_result: "result",
+  decision: "decision",
+};
+
+function FeedItem({ log }: { log: LiveLog }) {
+  const time = new Date(log.timestamp).toLocaleTimeString("en-US", { hour12: false });
+  return (
+    <li className="grid grid-cols-[4.5rem_4.5rem_1fr] gap-2 border-b border-line/70 py-1.5 font-mono text-xs last:border-0">
+      <time className="text-muted">{time}</time>
+      <span className={cn(log.type === "decision" ? "text-tide-700" : "text-muted")}>{FEED_LABEL[log.type] ?? log.type}</span>
+      <span className="break-words text-ink/90">
+        {log.session_id && <span className="mr-1.5 text-muted">{log.session_id.slice(0, 8)}</span>}
+        {log.type === "decision" && log.decision ? <DecisionStamp decision={log.decision} /> : log.content}
+      </span>
+    </li>
   );
 }
 
 export default function AdminPage() {
   const token = useAdminToken();
   const [authError, setAuthError] = useState<string | null>(null);
-  const [stats, setStats] = useState<AdminStats | null>(null);
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [liveLogs, setLiveLogs] = useState<(AgentLog & { session_id?: string })[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [liveLogs, setLiveLogs] = useState<LiveLog[]>([]);
   const [loading, setLoading] = useState(true);
-  const [autoScroll, setAutoScroll] = useState(true);
-  const logScrollRef = useRef<HTMLDivElement>(null);
+  const feedRef = useRef<HTMLOListElement>(null);
 
   const signOut = useCallback((message: string | null) => {
     setAuthError(message);
+    setDashboard(null);
     storeToken(null);
   }, []);
 
   const applyDashboard = useCallback((data: Dashboard) => {
-    setStats(data.stats);
-    setSessions(data.sessions);
+    setDashboard(data);
+    setLoadError(null);
   }, []);
 
   const handleLoadError = useCallback((err: unknown) => {
     if (err instanceof ApiError && err.status === 401) signOut("That token was rejected.");
-    else if (err instanceof ApiError && err.status === 503) signOut("Admin access is disabled on the server (ADMIN_TOKEN not set).");
+    else if (err instanceof ApiError && err.status === 503) signOut("Admin access is disabled on the server (ADMIN_TOKEN is not set).");
+    else setLoadError("Couldn't reach the API. Check that the backend is running, then refresh.");
   }, [signOut]);
 
   const refresh = () => {
@@ -215,10 +185,8 @@ export default function AdminPage() {
   }, [token, applyDashboard, handleLoadError]);
 
   useEffect(() => {
-    if (autoScroll && logScrollRef.current) {
-      logScrollRef.current.scrollTop = logScrollRef.current.scrollHeight;
-    }
-  }, [liveLogs, autoScroll]);
+    feedRef.current?.lastElementChild?.scrollIntoView({ block: "nearest" });
+  }, [liveLogs]);
 
   if (!token) {
     return (
@@ -232,156 +200,120 @@ export default function AdminPage() {
     );
   }
 
+  const stats = dashboard?.stats;
+  const sessions = dashboard?.sessions ?? [];
+
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Header */}
-      <header className="bg-white border-b border-slate-200 px-6 h-14 flex items-center justify-between sticky top-0 z-10">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/"
-            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-900 transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Link>
-          <div className="w-px h-5 bg-slate-200" />
-          <div>
-            <h1 className="font-semibold text-slate-900 text-sm">Admin Dashboard</h1>
-            <p className="text-xs text-slate-500">Real-time agent monitoring</p>
+    <div className="min-h-screen bg-paper">
+      <header className="sticky top-0 z-10 border-b border-line bg-card">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 md:px-6">
+          <div className="flex items-center gap-3">
+            <Link href="/" aria-label="Back to the chat" className="rounded-md p-1.5 text-muted hover:bg-paper hover:text-ink">
+              <ArrowLeft className="h-4 w-4" aria-hidden />
+            </Link>
+            <div>
+              <h1 className="font-display text-lg font-semibold leading-tight">Returns desk ledger</h1>
+              <p className="text-xs text-muted">Every decision Aria recorded, live</p>
+            </div>
           </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg">
-            <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-            <span className="text-xs text-emerald-700 font-medium">Live</span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={refresh}
+              className="flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-sm hover:border-tide-700"
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} aria-hidden />
+              Refresh
+            </button>
+            <button
+              type="button"
+              onClick={() => signOut(null)}
+              aria-label="Sign out"
+              title="Sign out"
+              className="rounded-lg p-2 text-muted hover:bg-paper hover:text-ink"
+            >
+              <LogOut className="h-4 w-4" aria-hidden />
+            </button>
           </div>
-          <button
-            onClick={refresh}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white border border-slate-200 hover:bg-slate-50 rounded-lg text-slate-600 font-medium transition-colors"
-          >
-            <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
-            Refresh
-          </button>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto p-6 space-y-6">
-        {/* Stats */}
-        {stats && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <StatCard label="Total Sessions"  value={stats.total_sessions}              icon={Activity}   color="text-blue-600"   bg="bg-blue-50" />
-            <StatCard label="Approval Rate"   value={`${stats.approval_rate}%`}         icon={TrendingUp} color="text-emerald-600" bg="bg-emerald-50" sub={`${stats.approved} approved`} />
-            <StatCard label="Total Refunded"  value={formatCurrency(stats.total_refunded)} icon={DollarSign} color="text-violet-600"  bg="bg-violet-50" />
-            <StatCard label="Customers"       value={stats.customer_count}               icon={Users}      color="text-amber-600"  bg="bg-amber-50" />
-          </div>
+      <main className="mx-auto max-w-6xl space-y-6 px-4 py-6 md:px-6">
+        {loadError && (
+          <p role="alert" className="rounded-lg border border-deny/40 bg-deny-soft px-4 py-3 text-sm text-deny">{loadError}</p>
         )}
 
-        {/* Outcome breakdown */}
-        {stats && (
-          <div className="grid grid-cols-3 gap-4">
-            {[
-              { label: "Approved",  value: stats.approved,  color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200", Icon: CheckCircle   },
-              { label: "Denied",    value: stats.denied,    color: "text-red-700",     bg: "bg-red-50 border-red-200",         Icon: XCircle       },
-              { label: "Escalated", value: stats.escalated, color: "text-amber-700",   bg: "bg-amber-50 border-amber-200",     Icon: AlertTriangle },
-            ].map(({ label, value, color, bg, Icon }) => (
-              <div key={label} className={cn("rounded-2xl border p-5 flex items-center gap-4", bg)}>
-                <div className="w-10 h-10 rounded-xl bg-white/70 flex items-center justify-center">
-                  <Icon className={cn("w-5 h-5", color)} />
-                </div>
-                <div>
-                  <p className={cn("text-3xl font-bold tabular-nums", color)}>{value}</p>
-                  <p className="text-sm text-slate-500 mt-0.5">{label}</p>
-                </div>
-                {stats.total_sessions > 0 && (
-                  <p className={cn("ml-auto text-lg font-semibold", color)}>
-                    {Math.round(value / stats.total_sessions * 100)}%
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
+        {stats ? (
+          <section
+            aria-label="Totals"
+            className="grid grid-cols-2 divide-line rounded-xl border border-line bg-card md:grid-cols-4 md:divide-x [&>*:nth-child(-n+2)]:border-b [&>*:nth-child(-n+2)]:border-line md:[&>*:nth-child(-n+2)]:border-b-0"
+          >
+            <Figure label="Conversations" value={String(stats.total_sessions)} />
+            <Figure label="Approval rate" value={`${stats.approval_rate}%`} note={`${stats.approved} approved`} />
+            <Figure label="Total refunded" value={formatCurrency(stats.total_refunded)} />
+            <Figure label="Customers on file" value={String(stats.customer_count)} />
+          </section>
+        ) : (
+          !loadError && <div className="h-28 animate-pulse rounded-xl border border-line bg-card" aria-label="Loading totals" />
         )}
 
-        {/* Live logs + sessions table */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-          {/* Live log */}
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col" style={{ height: 420 }}>
-            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 shrink-0">
-              <div className="flex items-center gap-2">
-                <Activity className="w-4 h-4 text-blue-500" />
-                <span className="text-sm font-semibold text-slate-800">Live Agent Logs</span>
-                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-400">{liveLogs.length} events</span>
-                <button
-                  onClick={() => setAutoScroll((v) => !v)}
-                  className={cn(
-                    "px-2 py-0.5 rounded-md text-xs font-medium transition-colors",
-                    autoScroll ? "bg-blue-100 text-blue-600" : "bg-slate-100 text-slate-500"
-                  )}
-                >
-                  Auto-scroll {autoScroll ? "on" : "off"}
-                </button>
-                <button
-                  onClick={() => setLiveLogs([])}
-                  className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
-            <div ref={logScrollRef} className="flex-1 overflow-y-auto px-4 py-2">
-              {liveLogs.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-center">
-                  <Activity className="w-8 h-8 text-slate-200 mb-2" />
-                  <p className="text-xs text-slate-400">
-                    Waiting for agent activity…<br />
-                    Start a chat to see real-time reasoning logs.
-                  </p>
-                </div>
-              ) : (
-                liveLogs.map((log, i) => <LiveLogItem key={i} log={log} />)
-              )}
-            </div>
-          </div>
+        {stats && <OutcomeSplit stats={stats} />}
 
-          {/* Recent sessions */}
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col" style={{ height: 420 }}>
-            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 shrink-0">
-              <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-blue-500" />
-                <span className="text-sm font-semibold text-slate-800">Recent Sessions</span>
-              </div>
-              <span className="text-xs text-slate-400">{sessions.length} sessions</span>
+        <div className="grid gap-6 lg:grid-cols-5">
+          <section aria-labelledby="sessions-heading" className="rounded-xl border border-line bg-card lg:col-span-3">
+            <div className="flex items-baseline justify-between px-5 pb-2 pt-4">
+              <h2 id="sessions-heading" className="font-display text-base font-semibold">Recent conversations</h2>
+              <span className="text-xs text-muted">{sessions.length} shown</span>
             </div>
-            <div className="flex-1 overflow-y-auto">
-              {sessions.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full">
-                  <Clock className="w-8 h-8 text-slate-200 mb-2" />
-                  <p className="text-xs text-slate-400">No sessions yet.</p>
-                </div>
-              ) : (
-                <table className="w-full">
-                  <thead className="sticky top-0 bg-white z-10 border-b border-slate-100">
-                    <tr className="text-[10px] text-slate-400 font-semibold uppercase tracking-widest">
-                      <th className="px-4 py-2.5 text-left">Session</th>
-                      <th className="px-4 py-2.5 text-left">Customer</th>
-                      <th className="px-4 py-2.5 text-left">Time</th>
-                      <th className="px-4 py-2.5 text-left">Outcome</th>
-                      <th className="px-4 py-2.5 text-left">Amount</th>
+            {sessions.length === 0 ? (
+              <p className="px-5 pb-6 pt-2 text-sm text-muted">No conversations yet. Decisions appear here as customers chat.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-y border-line text-left text-xs uppercase tracking-wider text-muted">
+                      <th scope="col" className="px-5 py-2 font-medium">Session</th>
+                      <th scope="col" className="px-3 py-2 font-medium">Customer</th>
+                      <th scope="col" className="px-3 py-2 font-medium">Started</th>
+                      <th scope="col" className="px-3 py-2 font-medium">Outcome</th>
+                      <th scope="col" className="px-5 py-2 text-right font-medium">Refund</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {sessions.map((s) => <SessionRow key={s.session_id} session={s} />)}
+                    {sessions.map((s) => (
+                      <tr key={s.session_id} className="border-b border-line/70 last:border-0">
+                        <td className="px-5 py-2.5 font-mono text-xs text-muted">{s.session_id.slice(0, 8)}</td>
+                        <td className="px-3 py-2.5 font-mono text-xs">{s.customer_id ?? "—"}</td>
+                        <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted">{formatDate(s.started_at)}</td>
+                        <td className="px-3 py-2.5"><DecisionStamp decision={s.outcome} /></td>
+                        <td className="px-5 py-2.5 text-right font-mono tabular-nums">
+                          {s.refund_amount != null ? formatCurrency(s.refund_amount) : "—"}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
-              )}
+              </div>
+            )}
+          </section>
+
+          <section aria-labelledby="feed-heading" className="flex flex-col rounded-xl border border-line bg-card lg:col-span-2">
+            <div className="flex items-baseline justify-between px-5 pb-2 pt-4">
+              <h2 id="feed-heading" className="font-display text-base font-semibold">Live agent feed</h2>
+              <button type="button" onClick={() => setLiveLogs([])} className="text-xs text-muted hover:text-ink">
+                Clear
+              </button>
             </div>
-          </div>
+            <ol ref={feedRef} aria-live="polite" className="max-h-96 min-h-40 flex-1 overflow-y-auto border-t border-line px-5 py-2">
+              {liveLogs.length === 0 ? (
+                <li className="py-8 text-center text-sm text-muted">Waiting for activity. Start a chat to watch each step arrive.</li>
+              ) : (
+                liveLogs.map((log, i) => <FeedItem key={i} log={log} />)
+              )}
+            </ol>
+          </section>
         </div>
       </main>
     </div>
   );
 }
-
-// ── Live log feed item ────────────────────────────────────────────────────────
