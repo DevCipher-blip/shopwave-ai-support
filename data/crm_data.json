@@ -35,7 +35,7 @@
     "total_spent": 347.43,
     "fraud_flag": false,
     "refund_history": [
-      {"order_id": "ORD-09812", "date": "2026-03-18", "reason": "CHANGE_OF_MIND", "amount": 45.0, "status": "approved"},
+      {"order_id": "ORD-09812", "date": "2026-03-25", "reason": "CHANGE_OF_MIND", "amount": 45.0, "status": "approved"},
       {"order_id": "ORD-09933", "date": "2026-04-09", "reason": "DEFECTIVE", "amount": 89.99, "status": "approved"},
       {"order_id": "ORD-09991", "date": "2026-05-02", "reason": "CHANGE_OF_MIND", "amount": 32.5, "status": "approved"}
     ],

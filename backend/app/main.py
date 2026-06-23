@@ -27,6 +27,7 @@ from app.database.models import (
     RefundHistory,
 )
 from app.agent.graph import run_agent
+from app.database.seed import seed
 
 
 # ── Session log broadcast registry ──────────────────────────────────────────
@@ -60,11 +61,9 @@ async def lifespan(app: FastAPI):
     # Create tables + seed on startup
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    try:
-        from app.database.seed import seed
-        await seed()
-    except Exception as e:
-        print(f"Seed warning: {e}")
+    seeded = await seed()
+    if seeded:
+        print(f"Seeded {seeded} customer profiles.")
     yield
 
 

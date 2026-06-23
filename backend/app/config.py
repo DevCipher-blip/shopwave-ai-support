@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./shopwave.db"
     cors_origins: str = "http://localhost:3000"
     log_level: str = "INFO"
+    rebase_demo_dates: bool = True
 
     # Paths
     data_dir: Path = Path(__file__).parent.parent.parent / "data"
