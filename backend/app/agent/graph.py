@@ -415,7 +415,7 @@ def build_graph(model: BaseChatModel, *, session_id: str, user_message: str, his
                 },
             )
             if name == "process_refund_decision":
-                args["session_id"] = session_id
+                args = {**args, "session_id": session_id}
 
             tool = TOOLS_BY_NAME.get(name)
             if tool is None:
